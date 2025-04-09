@@ -391,15 +391,8 @@ function toggleSideMenu() {
 
 async function updateSideMenuFromFirebase() {
   console.log("updateSideMenuFromFirebase called");
-  const currentUser = firebase.auth().currentUser;
-  if (!currentUser) {
-    console.error("ユーザーがログインしていません。サイドメニューを更新できません。");
-    return;
-  }
   try {
-    const querySnapshot = await db.collection("chatSessions")
-                                  .where("userId", "==", currentUser.uid)
-                                  .get();
+    const querySnapshot = await db.collection("chatSessions").get();
     conversationSessions = [];
     querySnapshot.forEach(doc => {
       conversationSessions.push(doc.data());
@@ -507,12 +500,6 @@ async function startNewChat() {
 }
 
 function createNewSession() {
-  const currentUser = firebase.auth().currentUser;
-  if (!currentUser) {
-    console.error("ユーザーがログインしていません。セッションを作成できません。");
-    return;
-  }
-
   if (currentSession && currentSession.sessionState === "active" && (!currentSession.messages || currentSession.messages.length === 0)) {
     console.log("既存の空のアクティブセッションを再利用します。");
     return;
@@ -526,8 +513,7 @@ function createNewSession() {
     messages: [],
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
-    sessionState: "active",
-    userId: currentUser.uid
+    sessionState: "active"
   };
 
   conversationSessions.push(session);
@@ -733,16 +719,10 @@ async function updateUntitledSessions() {
 
 async function backupToFirebase() {
   console.log("backupToFirebase called");
-  const currentUser = firebase.auth().currentUser;
-  if (!currentUser) {
-    console.error("ユーザーがログインしていません。バックアップできません。");
-    return;
-  }
   try {
     if (currentSession && currentSession.sessionState === "active") {
-      currentSession.userId = currentUser.uid;
       await db.collection("chatSessions").doc(currentSession.id).set(currentSession);
-      console.log(`アクティブなセッション "${currentSession.title}" (id=${currentSession.id}) のバックアップ成功 (ユーザー: ${currentUser.uid})`);
+      console.log(`アクティブなセッション "${currentSession.title}" (id=${currentSession.id}) のバックアップ成功`);
     } else {
       console.log("バックアップするアクティブなセッションは存在しません。");
     }
@@ -760,16 +740,9 @@ function deleteLocalChats() {
 }
 
 async function restoreFromFirebase() {
-  const currentUser = firebase.auth().currentUser;
-  if (!currentUser) {
-    console.error("ユーザーがログインしていません。リストアできません。");
-    return;
-  }
   try {
     console.log("restoreFromFirebase called");
-    const querySnapshot = await db.collection("chatSessions")
-                                  .where("userId", "==", currentUser.uid)
-                                  .get();
+    const querySnapshot = await db.collection("chatSessions").get();
     conversationSessions = [];
     querySnapshot.forEach(doc => {
       conversationSessions.push(doc.data());
@@ -838,7 +811,7 @@ function setSpeechBubbleText(text) {
   adjustSpeechBubbleFontSize();
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
   console.log("DOMContentLoaded event fired");
 
   const sendBtn = document.getElementById('sendBtn');
@@ -955,12 +928,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { name: "花蓮", latitude: 23.9769, longitude: 121.5514 },
     { name: "ホノルル", latitude: 21.3069, longitude: -157.8583 },
     { name: "サンフランシスコ", latitude: 37.7749, longitude: -122.4194 },
-    { name: "ニューヨーク", latitude: 40.7128, longitude: -74.0060 },
-    { name: "ロサンゼルス", latitude: 34.0522, longitude: -118.2437 },
-    { name: "パリ", latitude: 48.8566, longitude: 2.3522 },
-    { name: "ミラノ", latitude: 45.4642, longitude: 9.1900 },
-    { name: "アオスタ", latitude: 45.7376, longitude: 7.3171 },
-    { name: "ジュネーブ", latitude: 46.2044, longitude: 6.1432 }
+    { name: "ニューヨーク", latitude: 40.7128, longitude: -74.0060 }
   ];
 
   // 方角を計算する関数
@@ -1086,63 +1054,4 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ウィンドウのリサイズ時にフォントサイズを再調整
   window.addEventListener('resize', adjustSpeechBubbleFontSize);
-
-  // ==============================
-  // 認証関連
-  // ==============================
-
-  // 認証状態の監視とUI更新
-  firebase.auth().onAuthStateChanged((user) => {
-    const userEmailSpan = document.getElementById('user-email');
-    if (user) {
-      console.log("ログイン中のユーザー:", user.email);
-      // ログインしている場合
-      if (userEmailSpan) {
-        userEmailSpan.textContent = user.email;
-      }
-      // ログイン後に初期データ読み込みなどを行う場合
-      restoreFromFirebase(); // Firebaseからデータを復元
-      // updateSideMenu(); // restoreFromFirebase内で呼ばれるので不要な場合がある
-    } else {
-      // ログアウトしている場合
-      console.log("ユーザーはログアウトしています。");
-      if (userEmailSpan) {
-        userEmailSpan.textContent = ''; // メールアドレスをクリア
-      }
-      // ログインページへリダイレクト
-      // この処理は index.html の <script> 内の認証チェックと重複する可能性あり
-      // どちらか一方に統一するか、条件分岐を検討
-      if (window.location.pathname !== '/login.html') { // login.html でなければリダイレクト
-        // window.location.href = "login.html";
-        console.log("ログインページへのリダイレクトをスキップしました (重複回避のため)");
-      }
-    }
-  });
-
-  // ログアウト関数
-  function logout() {
-    firebase.auth().signOut().then(() => {
-      console.log("ログアウトしました");
-      // ログアウト後の処理 (例: ログインページへリダイレクト)
-      window.location.href = "login.html";
-    }).catch((error) => {
-      console.error("ログアウトエラー:", error);
-    });
-  }
-
-  // 追加: ログアウトリンクのイベントリスナー
-  const logoutLink = document.getElementById('logout-link');
-  if (logoutLink) {
-    logoutLink.addEventListener('click', (e) => {
-      e.preventDefault(); // デフォルトのリンク動作をキャンセル
-      logout();
-    });
-  } else {
-    console.error("Logout link not found in DOMContentLoaded");
-  }
-
-  // ==============================
-  // Firestore 関連
-  // ==============================
-  // ... (既存のFirestore関連コード) ...
 });

@@ -97,7 +97,8 @@ body {
   height: 100%;
   background-color: var(--side-menu-bg-color);
   color: var(--side-menu-text-color); /* Ensure base color is brown */
-  transition: right 0.3s ease, box-shadow 0.3s ease;
+  box-shadow: -2px 0 5px rgba(0,0,0,0.3);
+  transition: right 0.3s ease;
   z-index: 1000;
   display: flex;
   flex-direction: column;
@@ -106,7 +107,6 @@ body {
 
 #side-menu.open {
   right: 0;
-  box-shadow: -2px 0 5px rgba(0,0,0,0.3);
 }
 
 #side-menu-header {
@@ -168,20 +168,7 @@ body {
   border-top: 1px solid rgba(92, 64, 51, 0.3); /* Darker border */
   background-color: var(--header-bg-color); /* ★ Ensure background matches header */
   z-index: 1001; /* リストより上に表示 */
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-/* 追加: ユーザーメール表示スタイル */
-.user-email {
-  font-size: 0.75rem;
-  color: var(--side-menu-text-color);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 150px; /* 必要に応じて調整 */
-  margin-right: 10px; /* 3点メニューとの間隔 */
+  text-align: right; /* 右寄せ */
 }
 
 /* 3点リーダーメニュー */
@@ -643,31 +630,3 @@ body {
   pointer-events: none;
 }
 /* ===== コードブロック関連スタイルここまで ===== */
-
-/* ===== AQUOS sense3 lite (幅360px前後) 向け調整 ===== */
-@media screen and (max-width: 375px) {
-  /* 必要に応じて要素のサイズやマージンを微調整 */
-
-  #main-header .title {
-    font-size: 1.2rem; /* ヘッダータイトルを少し小さく */
-  }
-
-  .chat-input textarea {
-    font-size: 0.85rem; /* 入力欄のフォントを少し小さく */
-  }
-
-  .chat-input button {
-    width: 50px; /* 送信ボタンを少し小さく */
-    height: 50px;
-  }
-
-  .bubble {
-    max-width: 70%; /* 吹き出しの最大幅を少し広げる */
-  }
-
-  .user-email {
-    max-width: 100px; /* メールアドレス表示幅を調整 */
-  }
-
-  /* 他にも調整が必要なスタイルがあればここに追加 */
-}

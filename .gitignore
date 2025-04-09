@@ -88,3 +88,9 @@ firebase-cleanup/serviceAccountKey.json
 # .env.local
 # config.local.js
 
+# Project specific excludes
+gym_app/
+my-new-worker/
+test.html
+test.js
+

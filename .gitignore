@@ -1,3 +1,6 @@
+# MacOS
+.DS_Store
+
 # Logs
 logs
 *.log
@@ -74,4 +77,14 @@ node_modules/
 # Cloudflare Workers config
 wrangler.toml
 wrangler.jsonc
+
+# Firebase Service Account Key (機密情報)
+firebase-cleanup/serviceAccountKey.json
+
+# Backup files
+*.bak
+
+# Environment specific files (例)
+# .env.local
+# config.local.js
 

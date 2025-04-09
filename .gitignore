@@ -94,3 +94,8 @@ my-new-worker/
 test.html
 test.js
 
+# Additional excludes
+chat/
+package.json
+package-lock.json
+

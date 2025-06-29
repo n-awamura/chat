@@ -900,7 +900,7 @@ async function createNewSession() {
 // async function callGeminiApi(...) { /* 削除 */ }
 
 // Gemini Model Switcher Workerを呼び出す関数 (デフォルトモデル名を 1.5-pro に変更)
-async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', useGrounding = false, toolName = null, retryCount = 0) {
+async function callGeminiModelSwitcher(prompt, modelName = 'gemini-2.5-flash', useGrounding = false, toolName = null, retryCount = 0) {
     const workerUrl = "https://gemini-model-switcher.fudaoxiang-gym.workers.dev"; 
     const maxRetries = 2;
 
@@ -975,7 +975,7 @@ async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', use
 }
 
 async function callGeminiSummary(prompt, retryCount = 0) {
-  return await callGeminiModelSwitcher(prompt, 'gemini-1.5-flash', retryCount);
+  return await callGeminiModelSwitcher(prompt, 'gemini-2.5-flash', retryCount);
 }
 
 // ===== メインの Gemini 呼び出し関数 =====
@@ -1034,7 +1034,7 @@ async function callGemini(userInput) {
         // ★ モードに応じてパラメータを設定 (ノーマル = 1.5 Pro Grounding) ★
         if (isTaiwanMode) {
             // 台湾華語モード (第1段階: 翻訳のみ)
-            targetModelForFirstCall = 'gemini-1.5-pro'; // 翻訳自体は 1.5 Pro で良いか要検討
+            targetModelForFirstCall = 'gemini-2.5-flash'; // 翻訳自体は 1.5 Pro で良いか要検討
             promptToSendForFirstCall = `「${userInput}」を台湾で使われる繁体字中国語（台湾華語）に自然に訳してください。`;
             useGroundingForFirstCall = false;
             toolNameForGrounding = null;
@@ -1042,16 +1042,16 @@ async function callGemini(userInput) {
         } else if (selectedModelValue === 'gemini-1.5-pro') { // ★ 新しい「ノーマル」モード ★
              promptToSendForFirstCall = buildPromptFromHistory();
              useGroundingForFirstCall = true;
-             targetModelForFirstCall = 'gemini-1.5-pro'; // モデル指定
-             toolNameForGrounding = 'googleSearchRetrieval'; // ツール指定 (旧じっくりと同じ)
-             console.log(`Normal Mode (1.5 Pro / Grounding) - Prompt: ${promptToSendForFirstCall}, Tool: ${toolNameForGrounding}`);
+             targetModelForFirstCall = 'gemini-2.5-flash'; // モデル指定
+             toolNameForGrounding = 'googleSearch'; // ツール指定 (旧じっくりと同じ)
+             console.log(`Normal Mode (2.5 Flash / Grounding) - Prompt: ${promptToSendForFirstCall}, Tool: ${toolNameForGrounding}`);
         } else {
              // --- ここに来ることは想定しない (他のモードを追加する場合は処理を記述) ---
              console.warn(`Unexpected model value: ${selectedModelValue}. Falling back to default behavior.`);
              promptToSendForFirstCall = buildPromptFromHistory();
-             targetModelForFirstCall = 'gemini-1.5-pro'; // フォールバック先
+             targetModelForFirstCall = 'gemini-2.5-flash'; // フォールバック先
              useGroundingForFirstCall = true;
-             toolNameForGrounding = 'googleSearchRetrieval';
+             toolNameForGrounding = 'googleSearch';
         }
 
         console.log(`[DEBUG] Checking parameters before API call: useGrounding = ${useGroundingForFirstCall}, Tool name = ${toolNameForGrounding}`);
@@ -1083,7 +1083,7 @@ async function callGemini(userInput) {
                  // buildRefinementPrompt は originalAnswer のみ受け取るように修正した想定
                  const refinementPrompt = await buildRefinementPrompt("語尾変更", finalAnswer); 
                  console.log('Building refinement prompt...');
-                 const refinementModel = 'gemini-2.0-flash';
+                 const refinementModel = 'gemini-2.5-flash';
                  console.log(`Calling Model Switcher (Refinement) with model: ${refinementModel}, grounding: false`);
                  try {
                      // Refinement は Grounding なしで POST
@@ -1302,7 +1302,14 @@ async function buildRefinementPrompt(context, originalAnswer) {
     console.log("Building refinement prompt...");
     // context には、台湾華語モードの場合は翻訳結果、それ以外は会話履歴が入る想定
     // 台湾華語モードかどうかの判定はここでは難しいので、プロンプトを汎用的にする
-    return `あなたは、応答の語尾をすべて「だゾウ」で終える、親しみやすいゾウのキャラクターです。以下の【元のテキスト】を受け取り、その内容と意味を完全に維持したまま、自然な形で全ての文末が「だゾウ」になるように修正してください。修正されたテキストのみを出力し、それ以外の前置きや説明は一切含めないでください。
+    return `あなたは、親しみやすいゾウのキャラクターです。あなたの喋り方は、基本的に語尾が「〜だゾウ」や「〜ゾウ」になります。以下の【元のテキスト】を受け取り、その内容と意味を完全に維持したまま、あなたのキャラクターとして自然な口調に修正してください。
+
+【重要】
+*   すべての文末を無理に「だゾウ」で終える必要はありません。
+*   例えば、「〜です」「〜ます」は自然に「〜だゾウ」に変換してください。
+*   形容詞や名詞で終わる場合は、自然に「〜だゾウ」を付けたり、「〜（だ）ゾウ」と活用させたりしてください。（例：「すごい」→「すごいゾウ」、「簡単」→「簡単だゾウ」）
+*   文脈によっては「〜いいゾウ」のように、「だ」を省略したほうが自然な場合もあります。不自然な「〜なのだゾウ」のような表現は避けてください。
+*   修正後のテキストのみを出力し、それ以外の前置きや説明は一切含めないでください。
 
 【元のテキスト】
 ${originalAnswer}

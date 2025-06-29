@@ -3,9 +3,9 @@
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
-		"deploy": "wrangler deploy",
-		"dev": "wrangler dev",
-		"start": "wrangler dev",
+		"deploy": "wrangler deploy --name gemini-model-switcher --compatibility-date 2024-03-20 src/index.js",
+		"dev": "wrangler dev src/index.js",
+		"start": "wrangler dev src/index.js",
 		"test": "vitest"
 	},
 	"devDependencies": {

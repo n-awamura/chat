@@ -13,9 +13,6 @@ let lastVisibleDocFromFirestore = null; // ★ ページネーション用: 最�
 let allHistoryLoaded = false; // ★ ページネーション用: 全履歴読み込み完了フラグ ★
 const INITIAL_LOAD_COUNT = 10; // ★ ページネーション用: 初期読み込み件数 ★
 const LOAD_MORE_COUNT = 5; // ★ ページネーション用: 追加読み込み件数 ★
-let uploadedImageData = null; // 画像アップロード用
-const GEMINI_MODEL = 'gemini-2.5-flash'; // ★ 使用するGeminiモデル名を定数化 ★
-let chatInput = null; // ★ ユーザー入力フィールドをグローバル変数として保持 ★
 
 // ==============================
 // ユーティリティ関数
@@ -77,66 +74,6 @@ function processInlineFormatting(text) {
 }
 
 
-// ★★★ 新規関数 ★★★
-// テキストからコードブロックを抽出し、マークダウンを解釈して完全なHTMLを生成する
-function generateBubbleHtml(text) {
-    let finalHtml = '';
-    const codeBlockRegex = /```(\w*)\s*\n([\s\S]*?)```/g;
-    let lastIndex = 0;
-    const segments = [];
-    let match;
-    let blockIndex = 0;
-
-    // 1. テキストを「通常テキスト」と「コードブロック」のセグメントに分割
-    while ((match = codeBlockRegex.exec(text)) !== null) {
-        if (match.index > lastIndex) {
-            segments.push({ type: 'text', content: text.substring(lastIndex, match.index) });
-        }
-        const lang = match[1] || 'plaintext';
-        const code = match[2];
-        segments.push({ type: 'code', lang: lang, content: code, index: blockIndex });
-        lastIndex = codeBlockRegex.lastIndex;
-        blockIndex++;
-    }
-    if (lastIndex < text.length) {
-        segments.push({ type: 'text', content: text.substring(lastIndex) });
-    }
-
-    // 2. 各セグメントを適切なHTMLに変換
-    segments.forEach(segment => {
-        if (segment.type === 'text') {
-             if (segment.content && segment.content.trim()) {
-                 finalHtml += processMarkdownSegment(segment.content);
-             }
-        } else if (segment.type === 'code') {
-            const codeId = `code-${Date.now()}-${segment.index}-${Math.random().toString(36).substring(2)}`;
-            const escapedCode = escapeHtml(segment.content.trim());
-            const codeBlockHtml = `<div class="code-block-container">
-                                    <pre>
-<button class="copy-code-btn" data-clipboard-target="#${codeId}" title="コードをコピー"><i class="bi bi-clipboard"></i></button>
-<code id="${codeId}" class="language-${segment.lang}">${escapedCode}</code>
-</pre>
-                                  </div>`;
-            finalHtml += codeBlockHtml;
-        }
-    });
-    return finalHtml;
-}
-
-
-// ★★★ 新規ヘルパー関数 ★★★
-// Grounding（検索）APIに渡すための純粋なテキストプロンプトを生成する
-function getPromptTextForGrounding() {
-    if (!currentSession || !currentSession.messages?.length) return "";
-    // 過去のメッセージと最新のユーザー入力を結合してプロンプトを作成
-    const history = currentSession.messages.map(m => {
-        const sender = (m.sender === 'self' || m.sender === 'user' || m.sender === 'User') ? 'User' : 'AI';
-        return `${sender}: ${m.text}`;
-    }).join('\n');
-    return history;
-}
-
-
 // テキストセグメントをHTMLに変換するメイン関数
 function processMarkdownSegment(segment) {
     let finalHtml = '';
@@ -180,7 +117,7 @@ function processMarkdownSegment(segment) {
 }
 
 
-function addMessageRow(text, sender, timestamp = null, sources = null, rowId = null) {
+function addMessageRow(text, sender, timestamp = null, sources = null) {
     console.log("--- addMessageRow Start ---");
     console.log("Original Text:", text);
     // sources はコンソールにはログ出力するが、表示しない
@@ -231,9 +168,6 @@ function addMessageRow(text, sender, timestamp = null, sources = null, rowId = n
     // --- Create Row and Icon ---
     const row = document.createElement('div');
     row.classList.add('message-row', sender);
-    if (rowId) {
-        row.id = rowId;
-    }
     if (sender === 'other') {
         const icon = document.createElement('img');
         icon.classList.add('icon');
@@ -251,12 +185,61 @@ function addMessageRow(text, sender, timestamp = null, sources = null, rowId = n
 
     // --- Text Processing --- (Revised Flow for Code Blocks) ---
     const originalTextForCopy = text;
-    
-    // ★★★　新しいHTML生成関数を呼び出すように修正 ★★★
-    bubbleText.innerHTML = generateBubbleHtml(text);
-    
-    console.log("Final HTML with Code Blocks Correctly Interleaved:", bubbleText.innerHTML);
-    // bubbleText.innerHTML = finalHtml; // Set the final HTML
+    const codeBlocks = []; // Keep track of code blocks separately if needed later
+    const codeBlockRegex = /```(\w*)\s*\n([\s\S]*?)```/g; // FIX: Allow whitespace after lang name
+    let lastIndex = 0;
+    let match;
+    let blockIndex = 0;
+    const segments = []; // Array to hold alternating text and code block objects
+
+    // 1. Extract Code Blocks and Identify Text Segments
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+        // Add text segment before the code block
+        if (match.index > lastIndex) {
+            segments.push({ type: 'text', content: text.substring(lastIndex, match.index) });
+        }
+
+        // Add code block segment
+        const lang = match[1] || 'plaintext';
+        const code = match[2];
+        segments.push({ type: 'code', lang: lang, content: code, index: blockIndex });
+        codeBlocks.push({ lang, code }); // Optional: Store extracted code blocks
+
+        lastIndex = codeBlockRegex.lastIndex; // Update index for next segment
+        blockIndex++;
+    }
+    // Add the remaining text segment after the last code block
+    if (lastIndex < text.length) {
+        segments.push({ type: 'text', content: text.substring(lastIndex) });
+    }
+
+    console.log("Processed Segments (Text/Code):", segments);
+
+    // 2. Process Segments and Build Final HTML
+    let finalHtml = '';
+    segments.forEach(segment => {
+        if (segment.type === 'text') {
+            // Process the text segment using the markdown helper
+             if (segment.content && segment.content.trim()) { // Avoid processing empty/whitespace segments
+                 finalHtml += processMarkdownSegment(segment.content);
+             }
+        } else if (segment.type === 'code') {
+            // Generate HTML for the code block
+            const codeId = `code-${Date.now()}-${segment.index}-${Math.random().toString(36).substring(2)}`;
+            const escapedCode = escapeHtml(segment.content.trim()); // Trim code before escaping
+            // FIX: Move button inside <pre>
+            const codeBlockHtml = `<div class="code-block-container">
+                                    <pre>
+<button class="copy-code-btn" data-clipboard-target="#${codeId}" title="コードをコピー"><i class="bi bi-clipboard"></i></button>
+<code id="${codeId}" class="language-${segment.lang}">${escapedCode}</code>
+</pre>
+                                  </div>`;
+            finalHtml += codeBlockHtml; // Add code block HTML directly
+        }
+    });
+
+    console.log("Final HTML with Code Blocks Correctly Interleaved:", finalHtml);
+    bubbleText.innerHTML = finalHtml; // Set the final HTML
 
     // --- Timestamp Creation ---
     const bubbleTime = document.createElement('div');
@@ -344,15 +327,10 @@ function addMessageRow(text, sender, timestamp = null, sources = null, rowId = n
 }
 
 function buildPromptFromHistory() {
-    if (!currentSession || !currentSession.messages) {
-        return []; // 必ず配列を返す
-    }
-    // 内部の履歴形式 {sender, text} をAPI形式 {role, parts} に変換する
-    return currentSession.messages.map(msg => {
-        const role = (msg.sender === 'self' || msg.sender === 'user') ? 'user' : 'model';
-        const parts = [{ text: msg.text }];
-        return { role, parts };
-    });
+  if (!currentSession || !currentSession.messages?.length) return "";
+  return currentSession.messages
+    .map(m => `${m.sender}: ${m.text}`)
+    .join("\n");
 }
 
 /* 
@@ -408,37 +386,51 @@ async function endCurrentSession() {
 }
 
 async function onSendButton() {
-    const userInput = chatInput.value.trim();
-    const imageData = uploadedImageData; // Get uploaded image data
+  console.log("onSendButton called");
+  const input = document.getElementById('chatInput');
+  const message = input.value.trim();
+  if (!message) return;
 
-    // 入力と画像が両方空なら何もしない
-    if (!userInput && !imageData) {
-        console.log("onSendButton: 空の入力と画像なので何もしません。");
-        return;
-    }
+  if (!currentSession) {
+    console.log("現在のセッションが存在しないため、新規セッションを作成します。");
+    await createNewSession(); 
+  }
+  
+  if (currentSession.sessionState !== "active") {
+    console.log("終了済みセッションを再利用するため、active に切り替えます。");
+    currentSession.sessionState = "active";
+  }
+  currentSession.updatedAt = new Date(); // ★ Date オブジェクトで設定 ★
 
-    // ユーザーのメッセージをローカルの currentSession に追加
-    const userMessage = {
-        text: userInput,
-        sender: 'self',
-        timestamp: new Date()
-    };
-    if (imageData) {
-        userMessage.image = true;
-        userMessage.imageData = imageData; // Base64データを添付
-    }
-    currentSession.messages.push(userMessage);
-
-    // UIにユーザーメッセージを表示
-    addMessageRow(userInput, 'self', userMessage.timestamp, imageData);
-
-    // 先にUIを更新
+  addMessageRow(message, 'self');
+  input.value = '';
   scrollToBottom();
-    chatInput.value = '';
-    clearImagePreview();
-    
-    // callGeminiがインジケーター表示と応答表示、エラー処理を担当
-    await callGemini(userInput, imageData);
+
+  // currentSession.messages は createNewSession や loadSessionById で初期化されるか、
+  // 既存のものが使われる。常に配列であることを保証する。
+  if (!currentSession.messages) currentSession.messages = [];
+  currentSession.messages.push({
+    sender: 'User',
+    text: message,
+    timestamp: new Date()
+  });
+
+  const sessionIndex = conversationSessions.findIndex(s => s.id === currentSession.id);
+  if (sessionIndex > -1) {
+    conversationSessions[sessionIndex].updatedAt = currentSession.updatedAt;
+    conversationSessions[sessionIndex].sessionState = currentSession.sessionState;
+    // conversationSessions[sessionIndex].messages も同期が必要な場合があるが、
+    // currentSession.messages と conversationSessions[sessionIndex].messages が
+    // 同じ配列を参照していれば不要。createNewSessionでコピーを作っているので注意が必要。
+    // 安全策として messages も同期するなら以下のようにする:
+    // conversationSessions[sessionIndex].messages = [...currentSession.messages]; 
+    // ただし、パフォーマンス影響と、参照を保ちたいケースとの兼ね合いを考慮。
+    // ここではupdatedAtとsessionStateのみ更新。
+  } else {
+      console.warn("[onSendButton] currentSession not found in conversationSessions. This might indicate an issue.");
+  }
+
+  await callGemini(message);
 }
 
 async function toggleSideMenu() {
@@ -470,7 +462,7 @@ async function updateSideMenuFromFirebase(loadMore = false) {
     if (loadMore && lastVisibleDocFromFirestore) {
       query = query.startAfter(lastVisibleDocFromFirestore);
     } else if (!loadMore) {
-      lastVisibleDocFromFirestore = null;
+      lastVisibleDocFromFirestore = null; 
       allHistoryLoaded = false; 
       console.log("Initial load or refresh: lastVisibleDocFromFirestore reset.");
     }
@@ -504,7 +496,7 @@ async function updateSideMenuFromFirebase(loadMore = false) {
             console.warn(`Invalid date format for updatedAt: ${sessionData.updatedAt}, using epoch for session ID: ${doc.id}`);
             updatedAtDate = new Date(0); 
         }
-    } else {
+      } else {
         updatedAtDate = new Date(0); 
       }
 
@@ -520,7 +512,7 @@ async function updateSideMenuFromFirebase(loadMore = false) {
             console.warn(`Invalid date format for createdAt: ${sessionData.createdAt}, using epoch for session ID: ${doc.id}`);
             createdAtDate = new Date(0);
         }
-        } else {
+      } else {
         createdAtDate = new Date(0); // createdAt がない場合はエポックく
       }
 
@@ -548,7 +540,7 @@ async function updateSideMenuFromFirebase(loadMore = false) {
     }
 
     if (newSessions.length < countToLoad) {
-        allHistoryLoaded = true;
+      allHistoryLoaded = true;
       console.log("All chat history loaded from Firestore.");
     }
 
@@ -759,65 +751,64 @@ function updateSideMenu() {
 function loadSessionById(id) {
   console.log("loadSessionById called, id=", id);
   const session = conversationSessions.find(s => s.id === id);
-  if (!session) {
-    console.error(`Session with ID ${id} not found in local cache.`);
-    return;
-  }
+  if (!session) return;
 
   currentSession = session;
 
   const chatMessagesDiv = document.getElementById('chatMessages');
   chatMessagesDiv.innerHTML = "";
-  lastHeaderDate = null;
+  lastHeaderDate = null; // ★ lastHeaderDate をリセット ★
 
-  console.log(`Loading messages for session ${id}. Total messages: ${(session.messages || []).length}`);
-
-  (session.messages || []).forEach((item, index) => {
-    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    // ★ ここでメッセージオブジェクトの中身を正確にログ出力します ★
-    console.log(`Message ${index}:`, JSON.stringify(item));
-    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-
-    let messageTimestamp = null;
-    if (item.timestamp) {
-        if (typeof item.timestamp.toDate === 'function') {
-            messageTimestamp = item.timestamp.toDate();
-        } else if (item.timestamp instanceof Date) {
-            messageTimestamp = item.timestamp;
-        } else {
-            const parsedDate = new Date(item.timestamp);
-            if (!isNaN(parsedDate.getTime())) {
-                messageTimestamp = parsedDate;
-            }
+  (session.messages || []).forEach(item => {
+    // ... (Timestamp 変換処理)
+    if (item.timestamp && item.timestamp.seconds) {
+        item.timestamp = new Date(item.timestamp.seconds * 1000);
+    } else if (item.timestamp && typeof item.timestamp === 'string') {
+        // 文字列形式のタイムスタンプも Date オブジェクトに変換
+        try {
+            item.timestamp = new Date(item.timestamp);
+        } catch (e) {
+            console.warn("Failed to parse timestamp string:", item.timestamp, e);
+            item.timestamp = new Date(); // パース失敗時は現在時刻など
         }
     }
-    
-    const senderRole = (item.sender === 'self' || item.sender === 'user' || item.sender === 'User') ? 'self' : 'other';
-
     addMessageRow(
       item.text,
-      senderRole,
-      messageTimestamp
+      item.sender === 'User' ? 'self' : 'other',
+      item.timestamp
     );
   });
   scrollToBottom();
 }
 
-async function startNewChat(updateUI = true) {
+async function startNewChat() {
   console.log("startNewChat called");
+  if (isCreatingNewSession) {
+    console.log("Already creating a new session, ignoring click.");
+    return;
+  }
+  isCreatingNewSession = true;
+  showThinkingIndicator(true);
 
-    // await endCurrentSession(); // ★★★ この呼び出しを削除 ★★★
-
-    if (updateUI) {
-        const chatMessages = document.getElementById('chatMessages'); // ID を 'chat-messages' から 'chatMessages' に修正
-        if (chatMessages) { // 要素の存在を念の為確認
-            chatMessages.innerHTML = '';
-        }
-        // document.getElementById('chat-title').textContent = 'New Chat'; // 存在しない要素の操作なので削除
-        lastHeaderDate = null;
+  try {
+    if (currentSession && currentSession.sessionState === "active") {
+      await endCurrentSession();
     }
+    
+    await createNewSession(); // currentSession と conversationSessions がここで更新される想定
 
-    await createNewSession();
+    console.log("New session created. Updating side menu immediately.");
+    updateSideMenu(); 
+    
+    console.log("Performing initial load for side menu from Firebase.");
+    await updateSideMenuFromFirebase(false); 
+
+  } catch (error) {
+    console.error("Error starting new chat:", error);
+  } finally {
+    showThinkingIndicator(false);
+    isCreatingNewSession = false;
+  }
 }
 
 async function createNewSession() {
@@ -838,12 +829,12 @@ async function createNewSession() {
         console.log("既存の空のアクティブセッションを再利用します:", existingEmptySession.id);
         currentSession = existingEmptySession;
         currentSession.updatedAt = new Date(); 
-        
-        // ★★★ UIクリア処理を削除 ★★★
-        // document.getElementById('chatMessages').innerHTML = "";
-        // lastHeaderDate = null;
-        // scrollToBottom();
-        
+        document.getElementById('chatMessages').innerHTML = "";
+        lastHeaderDate = null;
+        scrollToBottom();
+        // ★ 既存セッションを再利用する場合も conversationSessions の先頭に持ってくるか、
+        //    updateSideMenu が currentSession を特別扱いするロジックに任せる。
+        //    ここでは conversationSessions は変更せず、updateSideMenu に任せる。
         return Promise.resolve(); 
     }
 
@@ -905,75 +896,67 @@ async function createNewSession() {
     }
 }
 
-// ===== API呼び出し関数 (リファクタリング) =====
+// ===== API呼び出し関数 (Model Switcher のみ) =====
+// async function callGeminiApi(...) { /* 削除 */ }
 
-/**
- * ゾウのキャラクター設定をシステムプロンプトとして返す
- * @returns {object} Gemini APIのsystem_instruction形式のオブジェクト
- */
-function getElephantSystemInstruction() {
-    const instructions = `あなたは賢くて優しいゾウのキャラクター「パオーン」です。日本のユーザーと自然な日本語で会話します。
-あなたのルール：
-- ユーザーのメッセージを自然に洗練させ、より良い表現を提案するのが主な役割です。
-- ただし、通常の会話や質問にも応じます。
-- 語尾に不自然にならないように「〜だゾウ」「〜ゾウ」を付けます。深刻な話題や、付けると不自然な文脈では無理に付けないでください。
-- 常にフレンドリーで、親しみやすい口調を保ちます。
-- 句読点は自然に使用してください。
-- 箇条書きなど、元の形式を維持すべき場合はそれを尊重します。
-- 回答の前に「はい、承知いたしました。」のような前置きは絶対に言わず、回答内容だけを返してください。
-
-例文：
-- 元：すごいね -> すごいんだゾウ！
-- 元：わかった -> わかったゾウ
-- 元：これは何ですか？ -> これは〇〇だゾウ。
-- 元：悲しいです -> そうか、それは悲しいゾウ...。無理に元気を出さなくてもいいんだゾウ。
-- 元：以下の文章を修正してください。 -> （前置きなしで修正された文章）
-`;
-    return {
-        role: "system",
-        parts: [{ text: instructions }]
-    };
-}
-
-
-// Gemini Model Switcher Workerを呼び出すメイン関数
-async function callGeminiModelSwitcher(promptOrBody, modelName = GEMINI_MODEL, useGrounding = false, toolName = null, retryCount = 0) {
-    const workerUrl = "https://gemini-model-switcher.fudaoxiang-gym.workers.dev";
+// Gemini Model Switcher Workerを呼び出す関数 (デフォルトモデル名を 1.5-pro に変更)
+async function callGeminiModelSwitcher(prompt, modelName = 'gemini-2.5-flash', useGrounding = false, toolName = null, retryCount = 0) {
+    const workerUrl = "https://gemini-model-switcher.fudaoxiang-gym.workers.dev"; 
     const maxRetries = 2;
 
     try {
         let response;
+        let requestBody;
         let requestUrl = workerUrl;
-        let requestMethod;
+        let requestMethod = 'POST';
         let headers = { 'Content-Type': 'application/json' };
-        let fetchBody;
 
-        if (useGrounding && toolName) {
+        if (useGrounding && toolName) { 
             requestMethod = 'GET';
             const params = new URLSearchParams({
-                q: promptOrBody, // promptOrBody は文字列
+                q: prompt,
                 model: modelName,
-                tool: toolName
+                tool: toolName 
             });
             requestUrl = `${workerUrl}?${params.toString()}`;
             console.log(`[DEBUG] Grounding Request - URL: ${requestUrl}`);
             headers = {};
-            fetchBody = undefined;
+            requestBody = undefined;
         } else {
-            // POSTリクエストの場合、promptOrBodyはリクエストボディオブジェクト
             requestMethod = 'POST';
-            fetchBody = JSON.stringify(promptOrBody);
-            console.log(`[DEBUG] Sending POST request to Worker with body:`, JSON.parse(fetchBody));
+            // ★★★ 修正点: WorkerがGemini APIの形式を直接受け付けるように変更 ★★★
+            // Gemini APIが要求する 'contents' 形式のボディを作成
+            const geminiBody = {
+                contents: [{ parts: [{ text: prompt }] }]
+            };
+            requestBody = JSON.stringify(geminiBody); 
+            
+            // モデル名はクエリパラメータで渡すように変更
+            const urlObj = new URL(requestUrl);
+            urlObj.searchParams.set('model', modelName);
+            requestUrl = urlObj.toString();
+            
+            console.log(`[DEBUG] Normal Request - URL: ${requestUrl}, Body: ${requestBody}`);
         }
 
-        response = await fetch(requestUrl, {
+        console.log(`[DEBUG] Sending request to Worker:`, {
+             url: requestUrl,
+             method: requestMethod,
+             headers: headers,
+             body: (requestMethod === 'GET') ? '(GET request has no body)' : requestBody
+         });
+
+        // ★★★ 修正点: キャッシュを無効にするためのランダムなクエリパラメータを追加 ★★★
+        const uniqueUrl = `${requestUrl}${requestUrl.includes('?') ? '&' : '?'}cacheBust=${Date.now()}`;
+
+        response = await fetch(uniqueUrl, {
             method: requestMethod,
             headers: headers,
-            body: fetchBody
+            body: requestBody
         });
 
         if (!response.ok) {
-            const errorText = await response.text();
+             const errorText = await response.text();
             console.error(`Worker Error (${response.status}): ${errorText}`);
             let errorMessage = `Worker request failed with status ${response.status}`;
             try {
@@ -984,7 +967,7 @@ async function callGeminiModelSwitcher(promptOrBody, modelName = GEMINI_MODEL, u
         }
 
         const data = await response.json();
-        console.log("[DEBUG] Received data from Worker:", data);
+        console.log("[DEBUG] Received data from Worker:", JSON.stringify(data, null, 2));
 
         if (data && data.answer !== undefined) {
             return data;
@@ -997,259 +980,355 @@ async function callGeminiModelSwitcher(promptOrBody, modelName = GEMINI_MODEL, u
         console.error(`Error calling Gemini Model Switcher (Attempt ${retryCount + 1}):`, error);
         if (retryCount < maxRetries) {
             await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
-            return callGeminiModelSwitcher(promptOrBody, modelName, useGrounding, toolName, retryCount + 1);
+            return callGeminiModelSwitcher(prompt, modelName, useGrounding, toolName, retryCount + 1); 
         } else {
-            throw error;
+             throw error;
         }
     }
 }
 
 async function callGeminiSummary(prompt, retryCount = 0) {
-    console.log("callGeminiSummary called with prompt:", prompt);
-    const requestBody = {
-        contents: [{
-            role: 'user',
-            parts: [{
-                text: prompt
-            }]
-        }],
-        // Worker が generationConfig に対応していない可能性があるため削除
-        systemInstruction: {
-            parts: [{
-                text: "You are an expert at writing concise and informative titles. Respond only with the title."
-            }]
-        }
-    };
-    // モデル名を明示的に指定
-    requestBody.modelName = 'gemini-2.5-flash';
-
-    console.log("[callGeminiSummary] Sending request to switcher:", JSON.stringify(requestBody, null, 2));
-
-    return await callGeminiModelSwitcher(requestBody, retryCount);
+  // ★★★ 修正点: 第3引数(useGrounding)をfalseに、第4引数(toolName)をnullに明示的に設定 ★★★
+  return await callGeminiModelSwitcher(prompt, 'gemini-2.5-flash', false, null, retryCount);
 }
 
 // ===== メインの Gemini 呼び出し関数 =====
-async function callGemini(userInput, imageData = null) {
-    console.log(`callGemini called with model: ${GEMINI_MODEL}`);
-    console.log(`User Input: ${userInput}`);
+async function callGemini(userInput) {
+    // showThinkingIndicator(true); // ← 既存の静的インジケーターは一旦コメントアウトするか、併用を検討
 
+    const modelSelect = document.getElementById('model-select');
+    const selectedModelValue = modelSelect.value;
+    // const isGroundingModel = (selectedModelValue === 'gemini-1.5-pro' || selectedModelValue === 'gemini-2.0-flash'); // ★ 判定方法変更のため不要に
+    const isTaiwanMode = (selectedModelValue === 'gemini-1.5-pro-tw');
+
+    // ★ 考え中メッセージ表示の準備 (old.js から移植) ★
+    const chatMessagesDiv = document.getElementById('chatMessages');
+    const delayTime = 3000; // 3秒後に表示（6秒は少し長いかもしれないので調整）
     let loadingRow = null;
-    let loadingBubble = null;
-    const thinkingTimeout = setTimeout(() => {
+    let loadingText = null;
+    const updateTimeout = setTimeout(() => {
+        // 他のメッセージがまだなければインジケーターを追加
+        // (既に他のメッセージがあれば、すぐに応答が返ると期待し、ちらつき防止のため追加しないことも検討)
+        // もしくは、常に最後に追加するようにする
         loadingRow = document.createElement('div');
-        loadingRow.id = `thinking-${Date.now()}`;
         loadingRow.classList.add('message-row', 'other');
-        const icon = document.createElement('img');
-        icon.classList.add('icon');
-        icon.src = 'img/elephant.png';
-        icon.alt = 'AI アイコン';
-        loadingRow.appendChild(icon);
-        loadingBubble = document.createElement('div');
-        loadingBubble.classList.add('bubble');
-        const bubbleText = document.createElement('div');
-        bubbleText.classList.add('bubble-text', 'blinking-text');
-        bubbleText.innerHTML = generateBubbleHtml('考え中だゾウ...');
-        loadingBubble.appendChild(bubbleText);
-        loadingRow.appendChild(loadingBubble);
-        document.getElementById('chatMessages').appendChild(loadingRow);
+
+        const elephantIcon = document.createElement('img');
+        elephantIcon.classList.add('icon');
+        elephantIcon.src = 'img/elephant.png';
+        elephantIcon.alt = '象アイコン';
+        loadingRow.appendChild(elephantIcon);
+
+        const bubble = document.createElement('div');
+        bubble.classList.add('bubble');
+
+        loadingText = document.createElement('div');
+        loadingText.classList.add('bubble-text', 'blinking-text');
+        loadingText.innerText = "考え中だゾウ...";
+        bubble.appendChild(loadingText);
+
+        loadingRow.appendChild(bubble);
+        chatMessagesDiv.appendChild(loadingRow);
         scrollToBottom();
-    }, 3000);
+        console.log("Displayed '考え中だゾウ...' message.");
+    }, delayTime);
+    // ★ ここまで追加 ★
 
     try {
-        let initialAnswer;
-        let finalAnswer;
+        let targetModelForFirstCall = selectedModelValue;
+        let promptToSendForFirstCall = "";
+        let useGroundingForFirstCall = false;
+        let toolNameForGrounding = null;
+
+        console.log(`callGemini called`);
+        console.log(`Selected Model Value: ${selectedModelValue}`);
+        console.log(`Is Taiwan Mode?: ${isTaiwanMode}`);
+        // console.log(`Is Grounding Model?: ${isGroundingModel}`); // ★ 削除
+
+        // ★ モードに応じてパラメータを設定 (ノーマル = 1.5 Pro Grounding) ★
+        if (isTaiwanMode) {
+            // 台湾華語モード (第1段階: 翻訳のみ)
+            targetModelForFirstCall = 'gemini-2.5-flash'; // 翻訳自体は 1.5 Pro で良いか要検討
+            promptToSendForFirstCall = `「${userInput}」を台湾で使われる繁体字中国語（台湾華語）に自然に訳してください。`;
+            useGroundingForFirstCall = false;
+            toolNameForGrounding = null;
+            console.log(`Taiwan Mode - Translation Prompt: ${promptToSendForFirstCall}`);
+        } else if (selectedModelValue === 'gemini-1.5-pro') { // ★ 新しい「ノーマル」モード ★
+             promptToSendForFirstCall = buildPromptFromHistory();
+             useGroundingForFirstCall = true;
+             targetModelForFirstCall = 'gemini-2.5-flash'; // モデル指定
+             toolNameForGrounding = 'googleSearch'; // ツール指定 (旧じっくりと同じ)
+             console.log(`Normal Mode (2.5 Flash / Grounding) - Prompt: ${promptToSendForFirstCall}, Tool: ${toolNameForGrounding}`);
+        } else {
+             // --- ここに来ることは想定しない (他のモードを追加する場合は処理を記述) ---
+             console.warn(`Unexpected model value: ${selectedModelValue}. Falling back to default behavior.`);
+             promptToSendForFirstCall = buildPromptFromHistory();
+             targetModelForFirstCall = 'gemini-2.5-flash'; // フォールバック先
+             useGroundingForFirstCall = true;
+             toolNameForGrounding = 'googleSearch';
+        }
+
+        console.log(`[DEBUG] Checking parameters before API call: useGrounding = ${useGroundingForFirstCall}, Tool name = ${toolNameForGrounding}`);
+        console.log(`Calling Model Switcher (Initial) with model: ${targetModelForFirstCall}, grounding: ${useGroundingForFirstCall}, tool: ${toolNameForGrounding}`);
+
+        // --- API 呼び出し --- 
+        const data = await callGeminiModelSwitcher(
+            promptToSendForFirstCall,
+            targetModelForFirstCall, 
+            useGroundingForFirstCall, 
+            toolNameForGrounding
+        );
+        
+        // ★ 考え中メッセージをクリア ★
+        clearTimeout(updateTimeout);
+        // showThinkingIndicator(false); // ← 既存のインジケーターも非表示
+
+        let finalAnswer = null;
         let finalSources = null;
 
-        if (imageData) {
-            // ===== 画像ありの場合：2段階処理 =====
-            console.log("Image detected. Starting multi-step process...");
-
-            // --- ステップ1: 画像からキーワードを抽出 ---
-            console.log("Step 1: Identifying image content...");
-            const userPartsForRecognition = [];
-            const recognitionPromptText = `この画像に写っている人物、物、場所など、主要な被写体やコンセプトを簡潔に特定してください。この後、ウェブ検索で「${userInput}」という質問に答えるために使います。特定したキーワードのみを返してください。`;
-            userPartsForRecognition.push({ text: recognitionPromptText });
-
-            const mimeType = imageData.substring(5, imageData.indexOf(';'));
-            const base64Data = imageData.substring(imageData.indexOf(',') + 1);
-            userPartsForRecognition.push({
-                inline_data: { mime_type: mimeType, data: base64Data }
-            });
-            
-            const recognitionRequestBody = {
-                contents: [{ role: 'user', parts: userPartsForRecognition }],
-                modelName: GEMINI_MODEL, // キャラクター設定なしでキーワード抽出に集中
-            };
-
-            const recognitionData = await callGeminiModelSwitcher(recognitionRequestBody, GEMINI_MODEL, false, null);
-            const identifiedKeyword = recognitionData ? recognitionData.answer : null;
-
-            if (!identifiedKeyword || identifiedKeyword.trim() === "") {
-                throw new Error("画像からキーワードを抽出できませんでした。");
-            }
-            console.log(`Step 1 Result: Identified keyword is "${identifiedKeyword}"`);
-
-            // --- ステップ2: 抽出したキーワードで検索 ---
-            console.log("Step 2: Searching with identified keyword...");
-            const groundingPrompt = `${userInput} (${identifiedKeyword})`;
-            const groundingData = await callGeminiModelSwitcher(groundingPrompt, GEMINI_MODEL, true, 'googleSearch');
-            initialAnswer = groundingData.answer;
-            finalSources = groundingData.sources;
-
-        } else {
-            // ===== 画像なしの場合：通常の検索 =====
-            console.log("No image. Using standard grounding...");
-            const prompt = getPromptTextForGrounding();
-            const data = await callGeminiModelSwitcher(prompt, GEMINI_MODEL, true, 'googleSearch');
-            initialAnswer = data.answer;
+        if (data && data.answer !== undefined) {
+            finalAnswer = data.answer;
             finalSources = data.sources;
-        }
-
-        // --- 応答の口調をキャラクターに合わせる ---
-        if (initialAnswer) {
-             console.log(`Refining the answer...`);
-             const refinementPromptText = buildRefinementPrompt(initialAnswer);
-             const refinementRequestBody = {
-                 contents: [{ role: 'user', parts: [{ text: refinementPromptText }] }],
-                 modelName: GEMINI_MODEL,
-             };
-             const refinementData = await callGeminiModelSwitcher(refinementRequestBody, GEMINI_MODEL, false, null);
-             if (refinementData && refinementData.answer) {
-                 finalAnswer = refinementData.answer;
-                 console.log("Refinement successful.");
-             } else {
-                 console.warn("Refinement failed, using original answer.");
-                 finalAnswer = initialAnswer;
-             }
-        } else {
-            finalAnswer = "申し訳ないゾウ、答えが見つからなかった…。";
-        }
-
-        clearTimeout(thinkingTimeout);
-
-        currentSession.messages.push({
-            sender: 'ai',
-            text: finalAnswer,
-            timestamp: new Date(),
-            sources: finalSources,
-            image: !!imageData
-        });
-        currentSession.updatedAt = new Date();
-        backupToFirebase();
-
-        if (loadingRow) {
-            const bubbleText = loadingRow.querySelector('.bubble-text');
-            if (bubbleText) {
-                bubbleText.classList.remove('blinking-text');
-                bubbleText.innerHTML = generateBubbleHtml(finalAnswer);
+            
+            // ★ 語尾変換処理 (Refinement) を復活 ★
+            const shouldRefine = true; 
+            if (shouldRefine) {
+                 console.log(`Generating refinement prompt for: ${finalAnswer}`);
+                 // buildRefinementPrompt は originalAnswer のみ受け取るように修正した想定
+                 const refinementPrompt = await buildRefinementPrompt("語尾変更", finalAnswer); 
+                 console.log('Building refinement prompt...');
+                 const refinementModel = 'gemini-2.5-flash';
+                 console.log(`Calling Model Switcher (Refinement) with model: ${refinementModel}, grounding: false`);
+                 try {
+                     // Refinement は Grounding なしで POST
+                     const refinementData = await callGeminiModelSwitcher(refinementPrompt, refinementModel, false, null);
+                     if (refinementData && refinementData.answer) {
+                         finalAnswer = refinementData.answer; // 語尾変換後の回答で上書き
+                         console.log('Refinement successful.');
+                     } else {
+                         console.warn('Refinement failed or returned no answer, using original answer.');
+                     }
+                 } catch (refinementError) {
+                      console.error("Error during refinement call:", refinementError);
+                      console.warn("Using original answer due to refinement error.");
+                 }
             }
-            const bubbleTime = document.createElement('div');
-            bubbleTime.classList.add('bubble-time');
-            const now = new Date();
-            bubbleTime.innerText = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-            loadingBubble.appendChild(bubbleTime);
-            Prism.highlightAllUnder(loadingRow);
-        } else {
-            addMessageRow(finalAnswer, 'ai', new Date(), finalSources);
-        }
-        scrollToBottom();
 
-        if (currentSession.title === "無題" && currentSession.messages.length > 1) {
-            generateTitleForSession(currentSession.id);
+            // ★ AIの応答をセッションデータに追加 ★
+            if (!currentSession.messages) currentSession.messages = [];
+            currentSession.messages.push({
+                sender: 'Gemini',
+                text: finalAnswer,
+                timestamp: new Date(),
+                sources: finalSources // sources は Refinement 前のものを保持
+            });
+            currentSession.updatedAt = new Date(); // ★ Date オブジェクトで設定 ★
+
+            const geminiSessionIndex = conversationSessions.findIndex(s => s.id === currentSession.id);
+            if (geminiSessionIndex > -1) {
+                conversationSessions[geminiSessionIndex].updatedAt = currentSession.updatedAt;
+                // conversationSessions[geminiSessionIndex].messages = [...currentSession.messages]; // 同様に検討
+            }
+
+            // ★ 最終的な回答を表示 (考え中メッセージを更新 or 新規追加) ★
+            if (loadingRow && loadingText) {
+                console.log("Updating '考え中だゾウ...' message with final answer.");
+                loadingText.classList.remove('blinking-text');
+                // loadingText の内容を finalAnswer で更新する前に、
+                // finalAnswer を addMessageRow と同様に HTML に変換する必要がある
+                // addMessageRow のロジックを再利用するか、簡略化する
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = processMarkdownSegment(finalAnswer); // Markdown処理だけ行う
+                // コードブロックなどの処理も必要なら addMessageRow のロジックを呼ぶ
+                loadingText.innerHTML = tempDiv.innerHTML; 
+                
+                // タイムスタンプを追加 (old.js のロジック参考に)
+                const existingBubble = loadingRow.querySelector('.bubble');
+                if (existingBubble) {
+                    const existingTime = existingBubble.querySelector('.bubble-time');
+                    if (existingTime) existingTime.remove(); // 古いタイムスタンプがあれば削除
+
+                    const finalBubbleTime = document.createElement('div');
+                    finalBubbleTime.classList.add('bubble-time');
+                    const finalNow = new Date(); // 応答表示時の時刻
+                    const finalHours = finalNow.getHours().toString().padStart(2, '0');
+                    const finalMinutes = finalNow.getMinutes().toString().padStart(2, '0');
+                    finalBubbleTime.innerText = `${finalHours}:${finalMinutes}`;
+                    existingBubble.appendChild(finalBubbleTime);
+                    
+                    // コピーボタンも必要なら追加
+                    // ...
+                    Prism.highlightAllUnder(existingBubble); // コードハイライトも忘れずに
+                }
+            } else {
+                console.log("Adding new message row for final answer (no loading indicator was shown).");
+                addMessageRow(finalAnswer, 'other', new Date().getTime(), finalSources);
+            }
+            scrollToBottom(); // ★ 表示後にスクロール ★
+
+            // ★★★ セッションタイトル要約とバックアップを成功ブロック内に移動 ★★★
+            if (currentSession && currentSession.title === "無題") {
+                console.log("Current session is untitled, attempting to summarize...");
+                summarizeSessionAsync(currentSession).then(async (summary) => {
+                     if (summary && summary !== "無題") {
+                         currentSession.title = summary;
+                         currentSession.updatedAt = new Date();  // ★ Date オブジェクトで設定 ★
+                         console.log("Session title updated by summary:", summary);
+
+                         const summarySessionIndex = conversationSessions.findIndex(s => s.id === currentSession.id);
+                         if (summarySessionIndex > -1) {
+                             conversationSessions[summarySessionIndex].title = currentSession.title;
+                             conversationSessions[summarySessionIndex].updatedAt = currentSession.updatedAt;
+                         }
+                         updateSideMenu();
+                         await backupToFirebase(); 
+                     } else {
+                         // タイトルが「無題」のまま or 要約失敗でも updatedAt は更新されているのでバックアップ
+                         currentSession.updatedAt = new Date(); //念のため最新に
+                         if (geminiSessionIndex > -1) { // summarizeSessionAsync の前の index を再利用
+                            conversationSessions[geminiSessionIndex].updatedAt = currentSession.updatedAt;
+                         }
+                         await backupToFirebase(); 
+                     }
+                }).catch(async (error) => {
+                     console.error("Background session summary failed:", error);
+                     currentSession.updatedAt = new Date(); // エラー時も updatedAt を更新してバックアップ
+                     if (geminiSessionIndex > -1) {
+                        conversationSessions[geminiSessionIndex].updatedAt = currentSession.updatedAt;
+                     }
+                     await backupToFirebase(); 
+                });
+            } else {
+                 // タイトルが既に存在する場合も updatedAt を更新してバックアップ
+                 currentSession.updatedAt = new Date();
+                 if (geminiSessionIndex > -1) {
+                    conversationSessions[geminiSessionIndex].updatedAt = currentSession.updatedAt;
+                 }
+                 await backupToFirebase(); 
+            }
+            // ★★★ 移動ここまで ★★★
+
+        } else { // data が不正だった場合
+            console.error("Received null or invalid response from initial worker call.");
+            if (loadingRow && loadingText) {
+                console.log("Updating '考え中だゾウ...' message with final answer.");
+                loadingText.classList.remove('blinking-text');
+                // loadingText の内容を finalAnswer で更新する前に、
+                // finalAnswer を addMessageRow と同様に HTML に変換する必要がある
+                // addMessageRow のロジックを再利用するか、簡略化する
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = processMarkdownSegment(finalAnswer); // Markdown処理だけ行う
+                // コードブロックなどの処理も必要なら addMessageRow のロジックを呼ぶ
+                loadingText.innerHTML = tempDiv.innerHTML; 
+                
+                // タイムスタンプを追加 (old.js のロジック参考に)
+                const existingBubble = loadingRow.querySelector('.bubble');
+                if (existingBubble) {
+                    const existingTime = existingBubble.querySelector('.bubble-time');
+                    if (existingTime) existingTime.remove(); // 古いタイムスタンプがあれば削除
+
+                    const finalBubbleTime = document.createElement('div');
+                    finalBubbleTime.classList.add('bubble-time');
+                    const finalNow = new Date(); // 応答表示時の時刻
+                    const finalHours = finalNow.getHours().toString().padStart(2, '0');
+                    const finalMinutes = finalNow.getMinutes().toString().padStart(2, '0');
+                    finalBubbleTime.innerText = `${finalHours}:${finalMinutes}`;
+                    existingBubble.appendChild(finalBubbleTime);
+                    
+                    // コピーボタンも必要なら追加
+                    // ...
+                    Prism.highlightAllUnder(existingBubble); // コードハイライトも忘れずに
+                }
+            } else {
+                console.log("Adding new message row for final answer (no loading indicator was shown).");
+                addMessageRow(finalAnswer, 'other', new Date().getTime(), finalSources);
+            }
+            scrollToBottom(); // ★ 表示後にスクロール ★
+
+            // ★★★ セッションタイトル要約とバックアップを成功ブロック内に移動 ★★★
+            if (currentSession && currentSession.title === "無題") {
+                console.log("Current session is untitled, attempting to summarize...");
+                summarizeSessionAsync(currentSession).then(async (summary) => {
+                     if (summary && summary !== "無題") {
+                         currentSession.title = summary;
+                         currentSession.updatedAt = new Date();  // ★ Date オブジェクトで設定 ★
+                         console.log("Session title updated by summary:", summary);
+
+                         const summarySessionIndex = conversationSessions.findIndex(s => s.id === currentSession.id);
+                         if (summarySessionIndex > -1) {
+                             conversationSessions[summarySessionIndex].title = currentSession.title;
+                             conversationSessions[summarySessionIndex].updatedAt = currentSession.updatedAt;
+                         }
+                         updateSideMenu();
+                         await backupToFirebase(); 
+                     } else {
+                         // タイトルが「無題」のまま or 要約失敗でも updatedAt は更新されているのでバックアップ
+                         currentSession.updatedAt = new Date(); //念のため最新に
+                         if (geminiSessionIndex > -1) { // summarizeSessionAsync の前の index を再利用
+                            conversationSessions[geminiSessionIndex].updatedAt = currentSession.updatedAt;
+                         }
+                         await backupToFirebase(); 
+                     }
+                }).catch(async (error) => {
+                     console.error("Background session summary failed:", error);
+                     currentSession.updatedAt = new Date(); // エラー時も updatedAt を更新してバックアップ
+                     if (geminiSessionIndex > -1) {
+                        conversationSessions[geminiSessionIndex].updatedAt = currentSession.updatedAt;
+                     }
+                     await backupToFirebase(); 
+                });
+            } else {
+                 // タイトルが既に存在する場合も updatedAt を更新してバックアップ
+                 currentSession.updatedAt = new Date();
+                 if (geminiSessionIndex > -1) {
+                    conversationSessions[geminiSessionIndex].updatedAt = currentSession.updatedAt;
+                 }
+                 await backupToFirebase(); 
+            }
+            // ★★★ 移動ここまで ★★★
+
+            // ★★★ ここにあったタイトル要約・バックアップ処理は上記 if ブロック内に移動した ★★★
+
         }
 
     } catch (error) {
+        // ★ 考え中メッセージをクリア/エラー表示に更新 ★
+        clearTimeout(updateTimeout);
+        // showThinkingIndicator(false);
         console.error("Error in callGemini:", error);
-        clearTimeout(thinkingTimeout);
-        const errorMessage = `エラーが発生しましたゾウ...: ${error.message}`;
-        if (loadingRow) {
-            const bubbleText = loadingRow.querySelector('.bubble-text');
-            if (bubbleText) {
-                bubbleText.classList.remove('blinking-text');
-                bubbleText.innerText = errorMessage;
-            }
+        if (loadingRow && loadingText) {
+             loadingText.classList.remove('blinking-text');
+             loadingText.innerText = `エラーが発生しました: ${error.message}`;
         } else {
-            addMessageRow(errorMessage, 'other');
+             addMessageRow(`エラーが発生しました: ${error.message}`, 'other');
         }
-        scrollToBottom();
-    }
-}
+        // ★ エラー発生時もバックアップを試みる (エラー処理を追加) ★
+        try {
+            await backupToFirebase();
+        } catch (backupError) {
+            console.error("Backup failed after error in callGemini:", backupError);
+        }
+    } // ← この閉じ括弧が callGemini 関数の try...catch ブロック全体を閉じるもの
+} // ← この閉じ括弧が callGemini 関数自体を閉じるもの (これが不足している可能性)
 
-/**
- * ユーザーの全てのチャットセッションの updatedAt フィールドを正規化する
- * 文字列型の場合はFirestoreのTimestamp型に変換して更新する
- */
-async function generateTitleForSession(sessionId) {
-  // ログが多すぎるとの指摘があったため、一時的にコメントアウト
-  // console.log(`generateTitleForSession called for session ID: ${sessionId}`);
-  if (!sessionId) {
-      console.error("generateTitleForSession: No session ID provided.");
-      return null;
-  }
+// ★ buildRefinementPrompt の修正 (台湾華語モードを考慮) ★
+async function buildRefinementPrompt(context, originalAnswer) {
+    console.log("Building refinement prompt...");
+    // context には、台湾華語モードの場合は翻訳結果、それ以外は会話履歴が入る想定
+    // 台湾華語モードかどうかの判定はここでは難しいので、プロンプトを汎用的にする
+    return `あなたは、親しみやすいゾウのキャラクターです。あなたの喋り方は、基本的に語尾が「〜だゾウ」や「〜ゾウ」になります。以下の【元のテキスト】を受け取り、その内容と意味を完全に維持したまま、あなたのキャラクターとして自然な口調に修正してください。
 
-  const session = currentSession.id === sessionId ? currentSession : conversationSessions.find(s => s.id === sessionId);
+【重要】
+*   すべての文末を無理に「だゾウ」で終える必要はありません。
+*   例えば、「〜です」「〜ます」は自然に「〜だゾウ」に変換してください。
+*   形容詞や名詞で終わる場合は、自然に「〜だゾウ」を付けたり、「〜（だ）ゾウ」と活用させたりしてください。（例：「すごい」→「すごいゾウ」、「簡単」→「簡単だゾウ」）
+*   文脈によっては「〜いいゾウ」のように、「だ」を省略したほうが自然な場合もあります。不自然な「〜なのだゾウ」のような表現は避けてください。
+*   修正後のテキストのみを出力し、それ以外の前置きや説明は一切含めないでください。
 
-  if (!session || !session.messages || session.messages.length === 0) { // 1件でもあれば要約試行
-      // console.log("generateTitleForSession: No messages to generate title.");
-      return session ? session.title : null;
-  }
-   // すでに有効なタイトルがある場合は、APIコールをスキップ
-  if (session.title && session.title !== '無題' && session.title !== '応答がありませんでした。') {
-      // console.log(`Session ${sessionId} already has a title: "${session.title}". Skipping generation.`);
-       return session.title;
-  }
+【元のテキスト】
+${originalAnswer}
 
-
-  // AIへのリクエストプロンプトを作成
-  const historyText = session.messages
-      .map(msg => {
-          const sender = (msg.sender === 'self' || msg.sender === 'user' || msg.sender === 'User') ? 'ユーザー' : 'AI';
-          return `${sender}: ${msg.text}`;
-      })
-      .join('\n');
-
-  const prompt = `以下の会話を15文字程度で自然なタイトルに要約してください。重要なキーワードを含めてください。タイトルの前後に記号（括弧を含む）は一切付けないでください。\n${historyText}`;
-
-
-  try {
-      const summaryResult = await callGeminiSummary(prompt);
-      // callGeminiSummary はオブジェクトを返すので、その中の answer プロパティを見る
-      const summary = summaryResult ? summaryResult.answer : "応答がありませんでした。";
-
-      console.log(`Summary received: "${summary}" for session ${sessionId}`);
-
-      if (summary && summary.trim() !== "" && summary.trim() !== "応答がありませんでした。") {
-          const cleanedSummary = summary.replace(/["「」]/g, '').trim();
-          console.log(`Updating title for session ${sessionId} to "${cleanedSummary}"`);
-
-          // ★★★ 変更点: ローカルデータとUIを先に更新 ★★★
-          session.title = cleanedSummary;
-          session.updatedAt = new Date();
-          updateSideMenu(); // UIを即時反映
-
-          // Firebaseのデータをバックグラウンドで更新
-          try {
-              const sessionDocRef = db.collection("chatSessions").doc(sessionId);
-              await sessionDocRef.update({
-                  title: cleanedSummary,
-                  updatedAt: firebase.firestore.Timestamp.now()
-              });
-              console.log(`Successfully updated title in Firestore for session ${sessionId}`);
-          } catch (dbError) {
-              console.error(`Failed to update title in Firestore for session ${sessionId}:`, dbError);
-               // UIは更新済みなので、ここでのエラーはコンソール出力に留める
-          }
-
-
-          return cleanedSummary;
-      } else {
-          console.log("Summary was empty or an error message, not updating title.");
-          return session.title;
-      }
-    } catch (error) {
-      console.error('Error in generateTitleForSession:', error);
-      return session.title; // エラー時も現在のタイトルを返す
-  }
+【修正後のテキスト】`;
 }
 
 async function summarizeSessionAsync(session) {
@@ -1269,32 +1348,19 @@ async function summarizeSessionAsync(session) {
 async function updateUntitledSessions() {
   console.log("updateUntitledSessions called");
   let changed = false; 
-  // conversationSessions のコピーに対してループすることで、途中で要素が変更されても安全にする
-  const sessionsToUpdate = [...conversationSessions];
-
-  for (const session of sessionsToUpdate) {
-    // タイトルが「無題」または「応答がありませんでした。」で、メッセージが存在する場合
-    if ((session.title === "無題" || session.title === "応答がありませんでした。") && session.messages && session.messages.length > 0) {
+  for (const session of conversationSessions) {
+    if (session.title === "無題" && session.messages && session.messages.length > 0) {
       console.log(`セッション ${session.id} のタイトルを要約処理で更新します。`);
-      const summary = await summarizeSessionAsync(session);
-      
-      const sessionIndex = conversationSessions.findIndex(s => s.id === session.id);
-
-      // summaryが有効な文字列で、元のタイトルと異なる場合のみ更新
-      if (typeof summary === "string" && summary.trim() && summary.trim() !== session.title) {
-        if(sessionIndex !== -1) {
-          conversationSessions[sessionIndex].title = summary.trim();
-          conversationSessions[sessionIndex].updatedAt = new Date();
-          changed = true;
-        }
+      const summary = await summarizeSessionAsync(session); 
+      if (typeof summary === "string" && summary.trim() && summary.trim() !== "無題") {
+        session.title = summary.trim();
+        session.updatedAt = new Date(); // ★ Date オブジェクトで設定 ★
+        changed = true;
       }
     }
   }
   if (changed) { 
-  updateSideMenu();
-    // タイトル更新後にFirestoreへのバックアップも検討する
-    // ただし、一括更新は重くなる可能性があるので注意
-    // 現状はローカルの更新とUI反映のみ
+    updateSideMenu();
   }
 }
 
@@ -1327,7 +1393,7 @@ async function backupToFirebase() {
                 sessionDataToSave.updatedAt = firebase.firestore.Timestamp.fromDate(dateObj);
             } else {
                 console.warn("Invalid date value for updatedAt (conversion failed):", currentSession.updatedAt, "Using current time instead.");
-    sessionDataToSave.updatedAt = firebase.firestore.Timestamp.now();
+                sessionDataToSave.updatedAt = firebase.firestore.Timestamp.now();
             }
         } catch (e) {
             console.warn("Error converting updatedAt to Date:", currentSession.updatedAt, e, "Using current time instead.");
@@ -1383,7 +1449,7 @@ async function backupToFirebase() {
             } catch(e) {
                 console.warn("Error converting message timestamp to Date:", msg.timestamp, e, "Using current time instead.");
                 newMsg.timestamp = firebase.firestore.Timestamp.now();
-          }
+            }
         } else {
            console.warn("Message timestamp is missing or invalid, using current time instead.");
            newMsg.timestamp = firebase.firestore.Timestamp.now();
@@ -1406,14 +1472,14 @@ async function backupToFirebase() {
             currentSession.createdAt = sessionDataToSave.createdAt.toDate();
         }
         if (sessionDataToSave.messages && Array.isArray(sessionDataToSave.messages)) {
-        currentSession.messages = sessionDataToSave.messages.map(msg => {
-             const localMsg = { ...msg };
-             if (localMsg.timestamp && localMsg.timestamp.toDate) {
-                 localMsg.timestamp = localMsg.timestamp.toDate();
-             }
-             return localMsg;
-         });
-    }
+            currentSession.messages = sessionDataToSave.messages.map(msg => {
+                 const localMsg = { ...msg }; 
+                 if (localMsg.timestamp && localMsg.timestamp.toDate) {
+                     localMsg.timestamp = localMsg.timestamp.toDate();
+                 }
+                 return localMsg;
+             });
+        }
         console.log("Local currentSession's timestamps and messages updated after successful backup.");
     }
 
@@ -1433,21 +1499,47 @@ function deleteLocalChats() {
 }
 
 async function restoreFromFirebase() {
-    console.log(`restoreFromFirebase called. Current User UID: ${firebase.auth().currentUser.uid}`);
-    if (!firebase.auth().currentUser) {
-        console.warn("restoreFromFirebase: User not logged in.");
+  const currentUser = firebase.auth().currentUser;
+  if (!currentUser) {
+    console.error("ユーザーがログインしていません。リストアできません。");
     return;
   }
-    // ここでUI操作は行わない（呼び出し元で制御）
+  console.log("restoreFromFirebase called. Current User UID:", currentUser.uid);
+  
+  showThinkingIndicator(true); // ★ ロード中にインジケーター表示 ★
+  document.getElementById('chatMessages').innerHTML = ""; // チャット表示をクリア
+  currentSession = null; // カレントセッションをクリア
+  lastHeaderDate = null; // 日付ヘッダーもリセット
+
+  // conversationSessions は updateSideMenuFromFirebase でクリア＆設定されるのでここでは何もしない
+  
+  try {
+    // ★ updateSideMenuFromFirebase を呼び出して初回ロードを行う ★
     await updateSideMenuFromFirebase(false); 
-    
-    // ロード後に currentSession が存在しない場合、startNewChatを呼び出す
-    // if (!currentSession) {
-    //    console.log("No current session after restore, creating new one.");
-    //    await startNewChat(); 
-    // }
-    
-    console.log('リストア完了 (Firestoreからの初回読み込み完了)');
+    console.log("リストア完了 (Firestoreからの初回読み込み完了)");
+
+    // 必要であれば、最も新しいセッションを currentSession に設定するなどのロジック
+    if (conversationSessions.length > 0) {
+        // updatedAt でソートされている前提 (updateSideMenuFromFirebase でソートされる)
+        // もし自動で最新を開かない仕様なら、currentSession は null のままか、特定の条件で設定
+        // currentSession = conversationSessions[0]; // 例: 最新を自動で開く場合
+        // loadSessionById(conversationSessions[0].id);
+        console.log("セッションリストア後、currentSession は自動的には設定されません。必要に応じて手動でロードしてください。");
+    } else {
+        console.log("リストアするセッションがありませんでした。");
+        // 必要ならここで createNewSession を呼ぶ
+        // await createNewSession();
+        // await updateSideMenuFromFirebase(false); 
+    }
+
+  } catch (error) {
+    console.error("リストアエラー:", error);
+    if (error.code) { console.error(`Firestore Error Code: ${error.code}`); }
+    if (error.message) { console.error(`Firestore Error Message: ${error.message}`); }
+  } finally {
+    showThinkingIndicator(false); // ★ インジケーター非表示 ★
+    // updateSideMenu(); // updateSideMenuFromFirebase の finally で呼ばれるので不要
+  }
 }
 
 async function summarizeAllSessions() {
@@ -1505,16 +1597,16 @@ function setSpeechBubbleText(text) {
   adjustSpeechBubbleFontSize();
 }
 
-// Function to clear the image preview
-function clearImagePreview() {
-    uploadedImageData = null;
-    const imagePreviewContainer = document.getElementById('image-preview-container');
-    const imagePreview = document.getElementById('image-preview');
-    const imageUploadInput = document.getElementById('image-upload-input');
-    
-    if (imagePreviewContainer) imagePreviewContainer.style.display = 'none';
-    if (imagePreview) imagePreview.src = '';
-    if (imageUploadInput) imageUploadInput.value = ''; // Reset file input
+// ★ Thinking Indicator 関数を先に定義 ★
+function showThinkingIndicator(show) {
+    const indicator = document.getElementById('thinkingIndicator');
+    if (indicator) {
+        indicator.style.display = show ? 'flex' : 'none'; // display: flex で表示
+        if (show) {
+            // インジケーター表示時に最下部にスクロール
+            scrollToBottom(); 
+        }
+    }
 }
 
 // ==============================
@@ -1627,35 +1719,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
             document.getElementById('user-email').textContent = user.email;
 
-            // チャットUIをリセット
-            document.getElementById('chatMessages').innerHTML = '';
-            lastHeaderDate = null;
-            // showThinkingIndicator(true); // ★★★ 起動時のインジケーターは削除 ★★★
-
+            // ... (初期化処理)
             try {
-                 await restoreFromFirebase(); // これで conversationSessions がロードされる
-
-                 // ★★★ 変更点: 常に新しいチャットで開始する ★★★
-                 console.log("[INIT] Always starting a new chat on reload as requested.");
-                 await startNewChat();
-                 // ★★★ 変更点ここまで ★★★
-
-                 // ★★★ 起動時のタイトル自動更新はパフォーマンスに影響するため無効化 ★★★
-                 // await updateUntitledSessions();
-                 console.log("[INIT] Skipping automatic title generation for performance.");
-
+                 showThinkingIndicator(true);
+                 await restoreFromFirebase();
+                 await updateUntitledSessions();
+                 if (!currentSession) {
+                     console.log("No current session after restore, creating new one.");
+                     await createNewSession();
+                 }
+                 showThinkingIndicator(false);
              } catch (error) {
                  console.error("Initialization error after login:", error);
-                  // エラーが起きても、とにかく新しいチャットは開始できるようにフォールバック
+                 showThinkingIndicator(false);
                   if (!currentSession) {
                       try {
-                          await startNewChat();
+                          await createNewSession();
                       } catch (fallbackError) {
                           console.error("Fallback createNewSession failed:", fallbackError);
                       }
                   }
              }
-             // ★★★ finally ブロックとインジケーター非表示処理も削除 ★★★
 
         } else {
              // ★ ログアウト時のログを追加 ★
@@ -1694,7 +1778,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- DOMContentLoaded 内の他のリスナー設定 ---
     console.log("Setting up other event listeners..."); // ★ リスナー設定開始ログ ★
     const sendButton = document.getElementById('sendBtn');
-    chatInput = document.getElementById('chatInput');
+    const chatInput = document.getElementById('chatInput');
     const hamburger = document.getElementById('hamburger');
     const closeMenu = document.getElementById('close-menu');
     const newChat = document.getElementById('new-chat');
@@ -1703,47 +1787,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const deleteToggle = document.getElementById('delete-thread-mode-btn');
     const logoutLink = document.getElementById('logout-link');
     const micBtn = document.getElementById('micBtn');
-    const imageUploadBtn = document.getElementById('image-upload-btn');
-    const imageUploadInput = document.getElementById('image-upload-input');
-    const imagePreviewContainer = document.getElementById('image-preview-container');
-    const imagePreview = document.getElementById('image-preview');
-    const removeImageBtn = document.getElementById('remove-image-btn');
     // const weatherBtn = document.getElementById('weather-btn'); // ★ 天気ボタン取得をコメントアウト ★
-
-    // === Image Upload Listeners ===
-    if (imageUploadBtn) {
-        imageUploadBtn.addEventListener('click', () => {
-            if (imageUploadInput) {
-                imageUploadInput.click();
-            }
-        });
-    }
-
-    if (removeImageBtn) {
-        removeImageBtn.addEventListener('click', clearImagePreview);
-    }
-
-    if (imageUploadInput) {
-        imageUploadInput.addEventListener('change', (event) => {
-            const file = event.target.files[0];
-            if (!file) {
-                clearImagePreview();
-                return;
-            }
-
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                uploadedImageData = e.target.result;
-                if (imagePreview) imagePreview.src = uploadedImageData;
-                if (imagePreviewContainer) imagePreviewContainer.style.display = 'block';
-            };
-            reader.onerror = (error) => {
-                console.error("FileReader error: ", error);
-                clearImagePreview();
-            };
-            reader.readAsDataURL(file); // Read the file as a Base64 encoded string
-        });
-    }
 
     if (sendButton) sendButton.addEventListener('click', onSendButton);
     if (chatInput) chatInput.addEventListener('keypress', function(e) {
@@ -1874,6 +1918,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function initializeSpeechRecognition() {
     console.log("initializeSpeechRecognition called");
     const micBtn = document.getElementById("micBtn");
+    const chatInput = document.getElementById("chatInput");
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (SpeechRecognition && micBtn) {
@@ -1914,6 +1959,7 @@ function initializeSpeechRecognition() {
             // 確定した結果を入力欄に追加（既存のテキストの後ろに追加）
             if (finalTranscript) {
                  // ★ chatInput が正しく参照できているか確認 ★
+                const chatInput = document.getElementById("chatInput");
                 if (chatInput) {
                     chatInput.value += finalTranscript;
                     console.log(`Appended final transcript to chatInput. New value: '${chatInput.value}'`);
@@ -2088,34 +2134,58 @@ function getCityInfo(city) {
 
 // 吹き出しのテキストを設定・調整する関数群 (既存)
 function setSpeechBubbleText(text) {
-    const bubbleText = document.getElementById('bubble-text');
-    if (bubbleText) {
-        bubbleText.innerHTML = text;
-        adjustSpeechBubbleFontSize();
+    console.log("[setSpeechBubbleText] Function called with text:", text);
+    const bubble = document.getElementById('elephantBubble');
+    if (!bubble) {
+        console.error("[setSpeechBubbleText] Bubble element not found!");
+        return;
+    }
+    console.log("[setSpeechBubbleText] Bubble element FOUND.");
+    try {
+        bubble.textContent = text;
+        console.log("[setSpeechBubbleText] textContent set successfully.");
+        bubble.classList.add('visible');
+        console.log("[setSpeechBubbleText] 'visible' class added.");
+        adjustSpeechBubbleFontSize(); // フォントサイズ調整呼び出し
+        console.log("[setSpeechBubbleText] adjustSpeechBubbleFontSize called successfully.");
+    } catch (error) {
+        console.error("[setSpeechBubbleText] Error during setting text or class:", error);
     }
 }
 
 function adjustSpeechBubbleFontSize() {
+    console.log("[adjustSpeechBubbleFontSize] Function called.");
     const bubble = document.getElementById('elephantBubble');
-    if (!bubble) return;
-    
-    // 吹き出しの最大幅を取得
+    if (!bubble) {
+        console.error("[adjustSpeechBubbleFontSize] Bubble element not found!");
+        return;
+    }
+    console.log("[adjustSpeechBubbleFontSize] Bubble element FOUND.");
+    try {
         const maxWidth = bubble.offsetWidth;
-    
-    // テキストの長さをチェック
+        console.log("[adjustSpeechBubbleFontSize] offsetWidth obtained:", maxWidth);
         const textLength = bubble.textContent.length;
+        console.log("[adjustSpeechBubbleFontSize] textContent.length obtained:", textLength);
 
-    // テキストの長さに応じてフォントサイズを調整
-    if (textLength > 50) {
+        // 長さに応じてクラスをトグル (閾値は適宜調整)
+        if (textLength > 30) { // 例: 30文字を超えたら小さくする
+            console.log("[adjustSpeechBubbleFontSize] Text is long, adding 'long' class.");
             bubble.classList.add('long');
         } else {
+            console.log("[adjustSpeechBubbleFontSize] Text is short, removing 'long' class.");
             bubble.classList.remove('long');
         }
 
-    // 吹き出しの幅が最大幅を超えているかチェック
-    if (bubble.scrollWidth > maxWidth) {
-        // さらにフォントサイズを小さくするクラスを追加
+        // スクロール幅でのチェックも残す
+        const scrollWidth = bubble.scrollWidth;
+        console.log("[adjustSpeechBubbleFontSize] scrollWidth obtained:", scrollWidth);
+        if (scrollWidth > maxWidth) {
+            console.log("[adjustSpeechBubbleFontSize] scrollWidth > maxWidth, adding 'long' class.");
             bubble.classList.add('long');
+        }
+        console.log("[adjustSpeechBubbleFontSize] Font size adjustment finished.");
+    } catch (error) {
+        console.error("[adjustSpeechBubbleFontSize] Error during font size adjustment:", error);
     }
 }
 
@@ -2174,8 +2244,8 @@ async function normalizeAllSessionsUpdatedAt() {
   if (!currentUser) {
     console.error("正規化処理: ユーザーがログインしていません。");
     alert("正規化処理: ユーザーがログインしていません。");
-        return;
-    }
+    return;
+  }
 
   console.log("正規化処理: 開始 (ユーザーID:", currentUser.uid, ")");
   alert("チャット履歴の updatedAt フィールドの正規化処理を開始します。開発者コンソールで進捗を確認してください。処理には時間がかかる場合があります。");
@@ -2285,7 +2355,7 @@ async function normalizeAllSessionsUpdatedAt() {
 詳細は開発者コンソールを確認してください。ページをリロードして動作を確認してください。`);
 // 'yyyy-mm-dd'形式スキップは削除したため、アラートからも削除
 
-    } catch (error) {
+  } catch (error) {
     console.error("正規化処理中にエラーが発生しました:", error);
     alert("正規化処理中にエラーが発生しました。詳細は開発者コンソールを確認してください。");
   }
@@ -2303,8 +2373,8 @@ async function normalizeAllSessionsCreatedAt() {
   if (!currentUser) {
     console.error("createdAt正規化: ユーザーがログインしていません。");
     alert("createdAt正規化: ユーザーがログインしていません。");
-        return;
-    }
+    return;
+  }
 
   console.log("createdAt正規化: 開始 (ユーザーID:", currentUser.uid, ")");
   alert("チャット履歴の createdAt フィールドの正規化処理を開始します。開発者コンソールで進捗を確認してください。処理には時間がかかる場合があります。");
@@ -2382,28 +2452,9 @@ async function normalizeAllSessionsCreatedAt() {
     console.log(`結果: 総処理ドキュメント数: ${processedCount}, 更新ドキュメント数: ${updatedCount}, エラー/スキップ数: ${errorCount}`);
     alert(`createdAtの正規化処理が完了しました。\n総処理: ${processedCount}件\n更新: ${updatedCount}件\nエラー/スキップ: ${errorCount}件\n詳細は開発者コンソールを確認してください。`);
 
-    } catch (error) {
+  } catch (error) {
     console.error("createdAt正規化処理中にエラーが発生しました:", error);
     alert("createdAt正規化処理中にエラーが発生しました。詳細は開発者コンソールを確認してください。");
   }
 }
 // ★★★ createdAt データ正規化用のヘルパー関数ここまで ★★★
-
-// ★★★ 新規ヘルパー関数 ★★★
-// AIの応答をキャラクターの口調に修正するためのプロンプトを生成する
-function buildRefinementPrompt(originalAnswer) {
-    console.log("Building refinement prompt...");
-    return `あなたは、親しみやすいゾウのキャラクターです。あなたの喋り方は、基本的に語尾が「〜だゾウ」や「〜ゾウ」になります。以下の【元のテキスト】を受け取り、その内容と意味を完全に維持したまま、あなたのキャラクターとして自然な口調に修正してください。
-
-【重要】
-*   すべての文末を無理に「だゾウ」で終える必要はありません。
-*   例えば、「〜です」「〜ます」は自然に「〜だゾウ」に変換してください。
-*   形容詞や名詞で終わる場合は、自然に「〜だゾウ」を付けたり、「〜（だ）ゾウ」と活用させたりしてください。（例：「すごい」→「すごいゾウ」、「簡単」→「簡単だゾウ」）
-*   文脈によっては「〜いいゾウ」のように、「だ」を省略したほうが自然な場合もあります。不自然な「〜なのだゾウ」のような表現は避けてください。
-*   修正後のテキストのみを出力し、それ以外の前置きや説明は一切含めないでください。
-
-【元のテキスト】
-${originalAnswer}
-
-【修正後のテキスト】`;
-}

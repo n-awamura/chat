@@ -9,6 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="CHAT">
   <meta name="theme-color" content="#D8DBE0">
   <link rel="apple-touch-icon" sizes="180x180" href="img/elephant.png">
+  <link rel="icon" href="data:,">
 
 
   <!-- 外部CSS -->
@@ -114,10 +115,16 @@
   <!-- チャット -->
   <div class="chat-container">
     <div id="chatMessages" class="chat-messages"></div>
-    <div class="chat-input">
-      <textarea id="chatInput" placeholder="メッセージを入力..."></textarea>
-      <button id="micBtn" title="音声入力"><i class="bi bi-mic-fill"></i></button>
-      <button id="sendBtn"><i class="bi bi-send-fill"></i></button>
+    <div id="image-preview-container" style="display: none;">
+      <img id="image-preview" src="" alt="Image preview"/>
+      <button id="remove-image-btn">&times;</button>
+    </div>
+    <div class="chat-footer">
+        <textarea id="chatInput" placeholder="メッセージを入力..." rows="1"></textarea>
+        <input type="file" id="image-upload-input" accept="image/*" style="display: none;"/>
+        <button id="image-upload-btn" class="icon-btn" title="画像を選択"><i class="bi bi-image"></i></button>
+        <button id="micBtn" class="icon-btn" title="音声入力"><i class="bi bi-mic-fill"></i></button>
+        <button id="sendBtn" class="icon-btn" title="送信"><i class="bi bi-send-fill"></i></button>
     </div>
   </div>
 

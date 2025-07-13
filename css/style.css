@@ -168,7 +168,7 @@ body {
 /* メニューのメイン領域: position: relative; で下部メニューをabsolute配置 */
 #menu-content {
   position: relative;
-  flex: 1; 
+  flex: 1;
   overflow: hidden; /* 全体のオーバーフローを隠す */
 }
 
@@ -180,7 +180,7 @@ body {
   right: 0;
   bottom: 50px; /* 下部メニューの高さ分空ける */
   padding: 10px;
-  overflow-y: auto; 
+  overflow-y: auto;
 }
 
 /* 下部メニュー */
@@ -251,7 +251,7 @@ body {
   display: block;
 }
 
-/* ===== チャットコンテナ ===== */
+/* ===== チャットUI ===== */
 .chat-container {
   max-width: 375px;
   width: 100%;
@@ -264,54 +264,60 @@ body {
 
 /* ===== メッセージ一覧 ===== */
 .chat-messages {
-  flex: 1;
+  flex-grow: 1;
   overflow-y: auto;
   padding: 10px;
   background-color: var(--chat-bg-color); /* ★ Use updated variable */
 }
 
-/* ===== 入力エリア ===== */
-.chat-input {
-  flex-shrink: 0;
+.chat-footer {
   display: flex;
-  border-top: 1px solid var(--border-color);
-  background-color: #fff;
+  align-items: flex-end; /* Vertically align items to the bottom */
   padding: 8px;
-  align-items: center; /* Align items vertically */
-}
-.chat-input textarea {
-  flex: 1;
-  resize: none;
-  border-radius: 4px;
-  border: 1px solid var(--border-color);
-  padding: 5px;
-  font-size: 0.9rem;
-  font-family: var(--font-family-noto-sans-jp);
-  color: var(--main-text-color);
-  min-height: 40px; /* Ensure a minimum height */
-  align-self: stretch; /* Stretch to fill vertical space */
-}
-.chat-input button {
-  margin-left: 8px;
-  width: 55px; /* 元の固定幅に戻す */
-  height: 55px; /* 元の固定高さに戻す */
-  /* padding: 10px; */ /* パディング調整を削除 */
-  border-radius: 4px;
-  border: none;
-  background-color: var(--button-bg-color);
-  color: var(--button-text-color);
-  display: flex; /* 元の flex に戻す */
-  justify-content: center;
-  align-items: center;
-  cursor: pointer;
-  font-family: var(--font-family-montserrat);
-  /* line-height: 1; */ /* line-height 調整を削除 */
+  background-color: var(--header-bg-color);
+  border-top: 1px solid var(--border-color);
 }
 
-.chat-input button i {
-  font-size: 1.2rem; /* 元のアイコンサイズに戻す */
-  /* display: block; */ /* display: block を削除 */
+.chat-footer textarea {
+  flex-grow: 1;
+  border-radius: 8px; /* Reduced from 18px */
+  border: 1px solid var(--border-color);
+  padding: 7px 12px; /* Adjust padding for vertical centering */
+  font-size: 0.9rem;
+  line-height: 1.4;
+  height: 36px; /* Match button height */
+  box-sizing: border-box; /* Include padding and border in height */
+  resize: none;
+  overflow-y: hidden; /* Hide scrollbar initially */
+  max-height: 100px; /* Limit max height */
+  background-color: #fff;
+  color: var(--main-text-color);
+  margin: 0 5px; /* Add margin */
 }
+
+.chat-footer .icon-btn {
+  background: none;
+  border: none;
+  color: var(--button-bg-color);
+  cursor: pointer;
+  padding: 5px;
+  font-size: 1.2rem; /* Reduced from 1.3rem */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.chat-footer .icon-btn:hover {
+  opacity: 0.7;
+}
+
+.chat-footer .icon-btn i {
+  vertical-align: middle;
+}
+
 
 /* ===== メッセージ行 ===== */
 .message-row {
@@ -547,10 +553,10 @@ body {
   border-radius: 10px;
   padding: 5px 10px;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
-  
+
   opacity: 0;
   visibility: hidden;
-  
+
   z-index: 10;  /* 吹き出し本体全体の z-index */
   white-space: nowrap;
   pointer-events: none;
@@ -723,7 +729,7 @@ body {
 /* マイクアイコン固有のサイズ指定があれば復活させる (今回は不要) */
 /* General icon size is set above */
 /* .chat-input #micBtn i {
-  font-size: 1.0rem; 
+  font-size: 1.0rem;
 } */
 
 /* Style for the new chat button */
@@ -784,4 +790,40 @@ body {
   text-align: center;
   padding: 10px;
   font-size: 0.9em;
+}
+
+/* ===== Image Upload and Preview Styles ===== */
+#image-preview-container {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    margin: 0 10px 10px 10px; /* Margin below and on sides */
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background-color: #fff;
+    padding: 4px;
+}
+
+#image-preview {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 2px;
+}
+
+#remove-image-btn {
+    position: absolute;
+    top: -10px;
+    right: -10px;
+    background-color: black;
+    color: white;
+    border: 1px solid white;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    font-size: 14px;
+    line-height: 22px;
+    text-align: center;
+    cursor: pointer;
+    z-index: 10;
 }

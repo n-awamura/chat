@@ -70,7 +70,7 @@ body {
 #main-header .header-controls {
   display: flex;
   align-items: center;
-  padding-right: 14px; /* Previous value + 4px */
+  padding-right: 10px; /* Set right padding to 10px */
 }
 
 #main-header select {

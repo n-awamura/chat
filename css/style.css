@@ -45,13 +45,14 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 10px;
+  padding: 0; /* Remove padding */
   position: relative; /* Set as positioning context */
 }
 
 #main-header .logo {
   display: flex;
   align-items: center;
+  padding-left: 10px; /* Add left padding to align with chat icon */
 }
 
 #main-header .header-image {
@@ -69,6 +70,7 @@ body {
 #main-header .header-controls {
   display: flex;
   align-items: center;
+  padding-right: 14px; /* Previous value + 4px */
 }
 
 #main-header select {
@@ -273,9 +275,10 @@ body {
 .chat-footer {
   display: flex;
   align-items: flex-end; /* Vertically align items to the bottom */
-  padding: 8px;
+  padding: 8px 10px 8px 10px; /* T:8, R:10, B:8, L:10 (Right padding updated) */
   background-color: var(--header-bg-color);
   border-top: 1px solid var(--border-color);
+  gap: 0; /* Set space between items to 0px for testing */
 }
 
 .chat-footer textarea {
@@ -292,7 +295,7 @@ body {
   max-height: 100px; /* Limit max height */
   background-color: #fff;
   color: var(--main-text-color);
-  margin: 0 5px; /* Add margin */
+  margin: 0; /* Remove margin */
 }
 
 .chat-footer .icon-btn {
@@ -316,6 +319,11 @@ body {
 
 .chat-footer .icon-btn i {
   vertical-align: middle;
+}
+
+/* Add margin between textarea and first icon */
+#image-upload-btn {
+  margin-left: 12px;
 }
 
 

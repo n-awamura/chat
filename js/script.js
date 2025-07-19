@@ -11,7 +11,7 @@ let isCreatingNewSession = false; // ★ New Chat 連打防止フラグ
 let firebaseUiInitialized = false; // ★ FirebaseUI 初期化済みフラグを追加 ★
 let lastVisibleDocFromFirestore = null; // ★ ページネーション用: 最後に読み込んだFirestoreドキュメント ★
 let allHistoryLoaded = false; // ★ ページネーション用: 全履歴読み込み完了フラグ ★
-const INITIAL_LOAD_COUNT = 10; // ★ ページネーション用: 初期読み込み件数 ★
+const INITIAL_LOAD_COUNT = 5; // ★ ページネーション用: 初期読み込み件数 ★
 const LOAD_MORE_COUNT = 5; // ★ ページネーション用: 追加読み込み件数 ★
 
 // ==============================
@@ -946,10 +946,7 @@ async function callGeminiModelSwitcher(prompt, modelName = 'gemini-2.5-flash', u
              body: (requestMethod === 'GET') ? '(GET request has no body)' : requestBody
          });
 
-        // ★★★ 修正点: キャッシュを無効にするためのランダムなクエリパラメータを追加 ★★★
-        const uniqueUrl = `${requestUrl}${requestUrl.includes('?') ? '&' : '?'}cacheBust=${Date.now()}`;
-
-        response = await fetch(uniqueUrl, {
+        response = await fetch(requestUrl, {
             method: requestMethod,
             headers: headers,
             body: requestBody
@@ -988,7 +985,6 @@ async function callGeminiModelSwitcher(prompt, modelName = 'gemini-2.5-flash', u
 }
 
 async function callGeminiSummary(prompt, retryCount = 0) {
-  // ★★★ 修正点: 第3引数(useGrounding)をfalseに、第4引数(toolName)をnullに明示的に設定 ★★★
   return await callGeminiModelSwitcher(prompt, 'gemini-2.5-flash', false, null, retryCount);
 }
 
@@ -996,10 +992,9 @@ async function callGeminiSummary(prompt, retryCount = 0) {
 async function callGemini(userInput) {
     // showThinkingIndicator(true); // ← 既存の静的インジケーターは一旦コメントアウトするか、併用を検討
 
-    const modelSelect = document.getElementById('model-select');
-    const selectedModelValue = modelSelect.value;
-    // const isGroundingModel = (selectedModelValue === 'gemini-1.5-pro' || selectedModelValue === 'gemini-2.0-flash'); // ★ 判定方法変更のため不要に
-    const isTaiwanMode = (selectedModelValue === 'gemini-1.5-pro-tw');
+    // ★ 修正：モデル選択を削除し、「ノーマル」モードに固定
+    const fixedModelValue = 'gemini-1.5-pro'; // HTMLのvalueに合わせる
+    const isTaiwanMode = (fixedModelValue === 'gemini-1.5-pro-tw');
 
     // ★ 考え中メッセージ表示の準備 (old.js から移植) ★
     const chatMessagesDiv = document.getElementById('chatMessages');
@@ -1035,13 +1030,13 @@ async function callGemini(userInput) {
     // ★ ここまで追加 ★
 
     try {
-        let targetModelForFirstCall = selectedModelValue;
+        let targetModelForFirstCall = fixedModelValue; // ★ 修正
         let promptToSendForFirstCall = "";
         let useGroundingForFirstCall = false;
         let toolNameForGrounding = null;
 
         console.log(`callGemini called`);
-        console.log(`Selected Model Value: ${selectedModelValue}`);
+        console.log(`Selected Model Value: ${fixedModelValue}`); // ★ 修正
         console.log(`Is Taiwan Mode?: ${isTaiwanMode}`);
         // console.log(`Is Grounding Model?: ${isGroundingModel}`); // ★ 削除
 
@@ -1053,15 +1048,15 @@ async function callGemini(userInput) {
             useGroundingForFirstCall = false;
             toolNameForGrounding = null;
             console.log(`Taiwan Mode - Translation Prompt: ${promptToSendForFirstCall}`);
-        } else if (selectedModelValue === 'gemini-1.5-pro') { // ★ 新しい「ノーマル」モード ★
+        } else if (fixedModelValue === 'gemini-1.5-pro') { // ★ 修正: ここが「ノーマル」モードの処理になる
              promptToSendForFirstCall = buildPromptFromHistory();
              useGroundingForFirstCall = true;
-             targetModelForFirstCall = 'gemini-2.5-flash'; // モデル指定
+             targetModelForFirstCall = 'gemini-2.5-flash'; // ★★★ 指示通り 2.5 flash を使用 ★★★
              toolNameForGrounding = 'googleSearch'; // ツール指定 (旧じっくりと同じ)
              console.log(`Normal Mode (2.5 Flash / Grounding) - Prompt: ${promptToSendForFirstCall}, Tool: ${toolNameForGrounding}`);
         } else {
              // --- ここに来ることは想定しない (他のモードを追加する場合は処理を記述) ---
-             console.warn(`Unexpected model value: ${selectedModelValue}. Falling back to default behavior.`);
+             console.warn(`Unexpected model value: ${fixedModelValue}. Falling back to default behavior.`); // ★ 修正
              promptToSendForFirstCall = buildPromptFromHistory();
              targetModelForFirstCall = 'gemini-2.5-flash'; // フォールバック先
              useGroundingForFirstCall = true;

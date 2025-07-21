@@ -69,38 +69,55 @@ export default {
 		  return new Response(JSON.stringify({ error: e.message }), {
 			status: 500,
 			headers: corsHeaders,
-		  });
-		}
+		});
+	  }
 	  }
   
 	  // POST リクエストの処理 (グラウンディングなし)
 	  if (request.method === "POST") {
 		try {
-		  const { prompt, modelName } = await request.json();
-		  const model = modelName || "gemini-2.5-flash"; // デフォルトを更新
-		  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+		  // フロントから送られてくるリクエストボディ全体を取得
+		  const requestBody = await request.json();
+		  
+		  // リクエストボディからモデル名を取得、なければデフォルト値を使用
+		  // "contents": [{ "role": "model", "parts": [...] }] のような形式からモデル名を取り出すのは複雑なので、
+		  // フロント側でモデル名を指定してもらうか、固定のモデル名を使う。
+		  // 今回は、柔軟性を持たせるため、リクエストボディに "modelName" を含めてもらい、
+		  // なければデフォルトで 'gemini-2.5-flash' を使う戦略にする。
+		  const modelName = requestBody.modelName || "gemini-2.5-flash";
+
+		  // APIに渡す前に、リクエストボディから "modelName" を削除する
+		  // Gemini APIは "modelName" フィールドを想定していないため
+		  delete requestBody.modelName;
+
+		  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
   
 		  const geminiRes = await fetch(geminiUrl, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-			  contents: [{ parts: [{ text: prompt }] }],
-			}),
+			// フロントから受け取ったリクエストボディをそのまま使用
+			body: JSON.stringify(requestBody),
 		  });
   
 		   if (!geminiRes.ok) {
 			const errorText = await geminiRes.text();
 			console.error(`Gemini API Error (${geminiRes.status}): ${errorText}`);
-			return new Response(JSON.stringify({ error: `Gemini API failed with status ${geminiRes.status}` }), {
+			const errorJson = JSON.parse(errorText); // エラーレスポンスをJSONとしてパース
+			return new Response(JSON.stringify({ 
+				error: `Gemini API failed: ${errorJson.error?.message || 'Unknown error'}`,
+				details: errorJson 
+			}), {
 				status: geminiRes.status,
 				headers: corsHeaders,
 			});
 		  }
   
 		  const json = await geminiRes.json();
-		  const answer = json?.candidates?.[0]?.content?.parts?.[0]?.text || "不明";
+		  // Gemini APIの応答形式に合わせてアンサーとソースを取得
+		  const answer = json?.candidates?.[0]?.content?.parts?.[0]?.text || "応答がありませんでした。";
+		  const sources = json?.candidates?.[0]?.groundingMetadata?.webSearchQueries;
   
-		  return new Response(JSON.stringify({ answer }), { // result -> answer に変更
+		  return new Response(JSON.stringify({ answer, sources }), {
 			status: 200,
 			headers: corsHeaders,
 		  });

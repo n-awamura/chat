@@ -422,6 +422,10 @@ async function onSendButton() {
 
   if (!message && !hasImage) return;
 
+  // ★★★ FIX: AIに渡す前に画像がクリアされるのを防ぐ ★★★
+  // 送信時点の画像データをローカル変数にコピーして保持する
+  const imageToSend = hasImage ? { ...attachedImage } : null;
+
   if (!currentSession) {
     console.log("現在のセッションが存在しないため、新規セッションを作成します。");
     await createNewSession(); 
@@ -431,64 +435,46 @@ async function onSendButton() {
     console.log("終了済みセッションを再利用するため、active に切り替えます。");
     currentSession.sessionState = "active";
   }
-  currentSession.updatedAt = new Date(); // ★ Date オブジェクトで設定 ★
+  currentSession.updatedAt = new Date();
 
+  // ユーザーのメッセージを先にUIに追加する
   const messageData = {
       text: message,
       sender: 'self',
-      timestamp: new Date().getTime()
+      timestamp: new Date().getTime(),
+      image: imageToSend // 保持した画像データを使用
   };
-  if (hasImage) {
-      messageData.image = {
-          base64: attachedImage.base64,
-          mimeType: attachedImage.mimeType
-      };
-  }
+  addMessageRow(messageData);
 
-  addMessageRow(messageData); // ★ オブジェクトを渡すように変更
-
+  // UI/UX向上のため、入力欄とプレビューはすぐにリセット
   input.value = '';
-  // ★ プレビューをリセット
   if (hasImage) {
       document.getElementById('remove-image-btn').click(); 
   }
-  adjustTextareaHeight(input); // ★ 送信後に高さを元に戻す
+  adjustTextareaHeight(input);
   scrollToBottom();
 
-  // currentSession.messages は createNewSession や loadSessionById で初期化されるか、
-  // 既存のものが使われる。常に配列であることを保証する。
+  // セッション履歴にメッセージを保存
   if (!currentSession.messages) currentSession.messages = [];
-  
   const messageToStore = {
     sender: 'User',
     text: message,
-    timestamp: new Date()
+    timestamp: new Date(),
+    image: imageToSend // ここでも保持した画像データを使用
   };
-  if (hasImage) {
-      messageToStore.image = {
-          base64: attachedImage.base64,
-          mimeType: attachedImage.mimeType
-      };
-  }
   currentSession.messages.push(messageToStore);
 
-
+  // ローカルのセッションリストを更新
   const sessionIndex = conversationSessions.findIndex(s => s.id === currentSession.id);
   if (sessionIndex > -1) {
     conversationSessions[sessionIndex].updatedAt = currentSession.updatedAt;
     conversationSessions[sessionIndex].sessionState = currentSession.sessionState;
-    // conversationSessions[sessionIndex].messages も同期が必要な場合があるが、
-    // currentSession.messages と conversationSessions[sessionIndex].messages が
-    // 同じ配列を参照していれば不要。createNewSessionでコピーを作っているので注意が必要。
-    // 安全策として messages も同期するなら以下のようにする:
-    // conversationSessions[sessionIndex].messages = [...currentSession.messages]; 
-    // ただし、パフォーマンス影響と、参照を保ちたいケースとの兼ね合いを考慮。
-    // ここではupdatedAtとsessionStateのみ更新。
   } else {
       console.warn("[onSendButton] currentSession not found in conversationSessions. This might indicate an issue.");
   }
 
-  await callGemini(message, hasImage ? attachedImage : null);
+  // 最後にAIを呼び出す
+  await callGemini(message, imageToSend);
 }
 
 async function toggleSideMenu() {
@@ -971,7 +957,7 @@ async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', use
         let requestMethod = 'POST';
         let headers = { 'Content-Type': 'application/json' };
 
-        if (useGrounding && toolName) { 
+        if (useGrounding && toolName && !image) { // ★ 修正: 画像がない場合にのみGETリクエストにする
             requestMethod = 'GET';
             const params = new URLSearchParams({
                 q: prompt,
@@ -994,22 +980,24 @@ async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', use
             }
             if (image && image.base64 && image.mimeType) {
                 parts.push({
-                    inline_data: {
-                        mime_type: image.mimeType,
+                    inlineData: {
+                        mimeType: image.mimeType,
                         data: image.base64
                     }
                 });
             }
 
             const geminiBody = {
-                contents: [{ parts: parts }]
+                contents: [{ parts: parts }],
+                // ★ 修正: modelName を Worker に渡すためにボディに含める
+                modelName: modelName
             };
             requestBody = JSON.stringify(geminiBody); 
             
-            // モデル名はクエリパラメータで渡すように変更
-            const urlObj = new URL(requestUrl);
-            urlObj.searchParams.set('model', modelName);
-            requestUrl = urlObj.toString();
+            // ★ 修正: モデル名をクエリパラメータから削除
+            // const urlObj = new URL(requestUrl);
+            // urlObj.searchParams.set('model', modelName);
+            // requestUrl = urlObj.toString();
             
             console.log(`[DEBUG] Normal Request - URL: ${requestUrl}, Body: ${requestBody}`);
         }
@@ -1065,235 +1053,240 @@ async function callGeminiSummary(prompt, retryCount = 0) {
 
 // ===== メインの Gemini 呼び出し関数 =====
 async function callGemini(userInput, image = null) {
-    // showThinkingIndicator(true); // ← 既存の静的インジケーターは一旦コメントアウトするか、併用を検討
+  try {
+      // ★ 考え中メッセージ表示の準備
+      const chatMessagesDiv = document.getElementById('chatMessages');
+      const delayTime = 2000;
+      let loadingRow = null;
+      let loadingText = null;
+      
+      loadingRow = document.createElement('div');
+      loadingRow.classList.add('message-row', 'other');
+      const elephantIcon = document.createElement('img');
+      elephantIcon.classList.add('icon');
+      elephantIcon.src = 'img/elephant.png';
+      elephantIcon.alt = '象アイコン';
+      loadingRow.appendChild(elephantIcon);
+      const bubble = document.createElement('div');
+      bubble.classList.add('bubble');
+      loadingText = document.createElement('div');
+      loadingText.classList.add('bubble-text', 'blinking-text');
+      bubble.appendChild(loadingText);
+      loadingRow.appendChild(bubble);
 
-    // ★ 修正：モデル選択を削除し、「ノーマル」モードに固定
-    const fixedModelValue = 'gemini-1.5-pro'; // HTMLのvalueに合わせる
-    const isTaiwanMode = (fixedModelValue === 'gemini-1.5-pro-tw');
+      const updateTimeout = setTimeout(() => {
+          if (!loadingRow.isConnected) {
+              loadingText.innerText = "考え中だゾウ...";
+              chatMessagesDiv.appendChild(loadingRow);
+              scrollToBottom();
+              console.log("Displayed '考え中だゾウ...' message.");
+          }
+      }, delayTime);
 
-    // ★ 考え中メッセージ表示の準備 (復活) ★
-    const chatMessagesDiv = document.getElementById('chatMessages');
-    const delayTime = 3000; // 3秒後に表示
-    let loadingRow = null;
-    let loadingText = null;
-    const updateTimeout = setTimeout(() => {
-        loadingRow = document.createElement('div');
-        loadingRow.classList.add('message-row', 'other');
 
-        const elephantIcon = document.createElement('img');
-        elephantIcon.classList.add('icon');
-        elephantIcon.src = 'img/elephant.png';
-        elephantIcon.alt = '象アイコン';
-        loadingRow.appendChild(elephantIcon);
+      let finalAnswer = null;
+      let finalSources = null;
 
-        const bubble = document.createElement('div');
-        bubble.classList.add('bubble');
+      if (image) {
+          // ===================================
+          //  画像あり (2段階処理)
+          // ===================================
+          console.log(`callGemini with Image (2-step process)`);
+          
+          clearTimeout(updateTimeout);
+          if (!loadingRow.isConnected) chatMessagesDiv.appendChild(loadingRow);
+          loadingText.innerText = "画像を分析中だゾウ...";
+          scrollToBottom();
 
-        loadingText = document.createElement('div');
-        loadingText.classList.add('bubble-text', 'blinking-text');
-        loadingText.innerText = "考え中だゾウ...";
-        bubble.appendChild(loadingText);
+          // --- STEP 1: 画像認識 (汎用的なプロンプトに修正) ---
+          const recognitionPrompt = "この画像に写っている主要な物体、ランドマーク、または人物を最も的確に表す、固有名詞（可能な場合）を含む短いテキストを返してください。";
+          console.log(`[Step 1] Identifying subject in image...`);
+          
+          const recognitionData = await callGeminiModelSwitcher(
+              recognitionPrompt,
+              'gemini-2.5-flash',
+              false, // グラウンディング不要
+              null,
+              image
+          );
 
-        loadingRow.appendChild(bubble);
-        chatMessagesDiv.appendChild(loadingRow);
-        scrollToBottom();
-        console.log("Displayed '考え中だゾウ...' message.");
-    }, delayTime);
-    // ★ ここまで ★
+          const identifiedSubject = recognitionData?.answer?.trim();
+          if (!identifiedSubject || identifiedSubject.length < 1) {
+              throw new Error("画像から対象を特定できませんでした。");
+          }
+          console.log(`[Step 1] Identified subject: ${identifiedSubject}`);
 
-    try {
-        let targetModelForFirstCall;
-        let promptToSendForFirstCall;
-        let useGroundingForFirstCall = false;
-        let toolNameForGrounding = null;
+          // --- STEP 2: 情報検索 ---
+          loadingText.innerText = `「${identifiedSubject}」について検索中だゾウ...`;
+          
+          const finalSearchPrompt = `「${identifiedSubject}」について、次のユーザーの質問に詳しく答えてください: 「${userInput}」`;
+          console.log(`[Step 2] Searching for info with prompt: ${finalSearchPrompt}`);
+          
+          const searchData = await callGeminiModelSwitcher(
+              finalSearchPrompt,
+              'gemini-2.5-flash',
+              true, // グラウンディング使用
+              'googleSearch',
+              null // 2回目の呼び出しでは画像は不要
+          );
+          
+          if (!searchData || searchData.answer === undefined) {
+              throw new Error("情報の検索に失敗しました。");
+          }
 
-        console.log(`callGemini called`);
+          finalAnswer = searchData.answer;
+          finalSources = searchData.sources;
 
-        // ★ 画像が添付されている場合の処理を最優先する
-        if (image) {
-            targetModelForFirstCall = 'gemini-pro-vision';
-            // Visionモデルへのプロンプトは会話履歴を含めず、最新のユーザー入力のみ
-            promptToSendForFirstCall = userInput;
-            console.log(`Image attached. Using model '${targetModelForFirstCall}'.`);
-        } else if (isTaiwanMode) {
-            // 台湾華語モード (画像なし)
-            targetModelForFirstCall = 'gemini-1.5-pro';
-            promptToSendForFirstCall = `「${userInput}」を台湾で使われる繁体字中国語（台湾華語）に自然に訳してください。`;
-            console.log(`Taiwan Mode - Translation Prompt: ${promptToSendForFirstCall}`);
-        } else if (fixedModelValue === 'gemini-1.5-pro') {
-             // 通常モード (グラウンディング)
-             promptToSendForFirstCall = buildPromptFromHistory(false); // ★ 接頭辞なしで履歴を構築
-             useGroundingForFirstCall = true;
-             targetModelForFirstCall = 'gemini-2.5-flash'; // ★ ユーザーの指示通り 2.5 flash を使用する
-             toolNameForGrounding = 'googleSearch';
-             console.log(`Normal Mode (2.5 Flash / Grounding) - Prompt: ${promptToSendForFirstCall}, Tool: ${toolNameForGrounding}`);
-        } else {
-             // フォールバック
-             console.warn(`Unexpected model value: ${fixedModelValue}. Falling back to default behavior.`);
-             promptToSendForFirstCall = buildPromptFromHistory(false);
-             useGroundingForFirstCall = true;
-             targetModelForFirstCall = 'gemini-2.5-flash';
-             toolNameForGrounding = 'googleSearch';
-        }
+      } else {
+          // ===================================
+          //  画像なし (通常の処理)
+          // ===================================
+          console.log(`callGemini without Image (1-step process)`);
 
-        console.log(`[DEBUG] Final parameters: model=${targetModelForFirstCall}, useGrounding=${useGroundingForFirstCall}, tool=${toolNameForGrounding}`);
+          const promptToSend = buildPromptFromHistory(false);
+          const useGrounding = true;
+          const targetModel = 'gemini-2.5-flash';
+          const toolName = 'googleSearch';
 
-        // --- API 呼び出し ---
-        const data = await callGeminiModelSwitcher(
-            promptToSendForFirstCall,
-            targetModelForFirstCall,
-            useGroundingForFirstCall,
-            toolNameForGrounding,
-            image // ★ 画像データを渡す
-        );
+          const data = await callGeminiModelSwitcher(
+              promptToSend,
+              targetModel,
+              useGrounding,
+              toolName,
+              null // No image
+          );
+          
+          if (data && data.answer !== undefined) {
+              finalAnswer = data.answer;
+              finalSources = data.sources;
+          } else {
+               throw new Error("APIから有効な応答がありませんでした。");
+          }
+      }
 
-        // ★ 考え中メッセージをクリア ★
-        clearTimeout(updateTimeout);
+      // ===================================
+      //  共通の後処理
+      // ===================================
+      clearTimeout(updateTimeout);
 
-        let finalAnswer = null;
-        let finalSources = null;
+      if (finalAnswer === null) {
+          throw new Error("API応答から回答を抽出できませんでした。");
+      }
 
-        if (data && data.answer !== undefined) {
-            finalAnswer = data.answer;
-            finalSources = data.sources;
+      // ★ 語尾変換処理 (モデルを 2.5-flash に統一) ★
+      const shouldRefine = true;
+      if (shouldRefine) {
+          console.log(`Generating refinement prompt for: ${finalAnswer}`);
+          const refinementPrompt = await buildRefinementPrompt("語尾変更", finalAnswer);
+          const refinementModel = 'gemini-2.5-flash'; // ユーザー指示モデルに統一
+          console.log(`Calling Model Switcher (Refinement) with model: ${refinementModel}, grounding: false`);
+          try {
+              const refinementData = await callGeminiModelSwitcher(refinementPrompt, refinementModel, false, null, null);
+              if (refinementData && refinementData.answer) {
+                  finalAnswer = refinementData.answer;
+                  console.log('Refinement successful.');
+              } else {
+                  console.warn('Refinement failed, using original answer.');
+              }
+          } catch (refinementError) {
+              console.error("Error during refinement call:", refinementError);
+              console.warn("Using original answer due to refinement error.");
+          }
+      }
 
-            // ★ 語尾変換処理 ★
-            const shouldRefine = true;
-            if (shouldRefine) {
-                 console.log(`Generating refinement prompt for: ${finalAnswer}`);
-                 const refinementPrompt = await buildRefinementPrompt("語尾変更", finalAnswer);
-                 console.log('Building refinement prompt...');
-                 const refinementModel = 'gemini-1.5-pro';
-                 console.log(`Calling Model Switcher (Refinement) with model: ${refinementModel}, grounding: false`);
-                 try {
-                     const refinementData = await callGeminiModelSwitcher(refinementPrompt, refinementModel, false, null, null);
-                     if (refinementData && refinementData.answer) {
-                         finalAnswer = refinementData.answer;
-                         console.log('Refinement successful.');
-                     } else {
-                         console.warn('Refinement failed or returned no answer, using original answer.');
-                     }
-                 } catch (refinementError) {
-                      console.error("Error during refinement call:", refinementError);
-                      console.warn("Using original answer due to refinement error.");
-                 }
-            }
+      // ★ AIの応答をセッションデータに追加 ★
+      if (!currentSession.messages) currentSession.messages = [];
+      currentSession.messages.push({
+          sender: 'Gemini',
+          text: finalAnswer,
+          timestamp: new Date(),
+          sources: finalSources
+      });
+      currentSession.updatedAt = new Date();
 
-            // ★ AIの応答をセッションデータに追加 ★
-            if (!currentSession.messages) currentSession.messages = [];
-            currentSession.messages.push({
-                sender: 'Gemini',
-                text: finalAnswer,
-                timestamp: new Date(),
-                sources: finalSources
-            });
-            currentSession.updatedAt = new Date();
+      const geminiSessionIndex = conversationSessions.findIndex(s => s.id === currentSession.id);
+      if (geminiSessionIndex > -1) {
+          conversationSessions[geminiSessionIndex].updatedAt = currentSession.updatedAt;
+      }
 
-            const geminiSessionIndex = conversationSessions.findIndex(s => s.id === currentSession.id);
-            if (geminiSessionIndex > -1) {
-                conversationSessions[geminiSessionIndex].updatedAt = currentSession.updatedAt;
-            }
+      // ★ 最終的な回答を表示 ★
+      if (!loadingRow.isConnected) {
+          chatMessagesDiv.appendChild(loadingRow);
+      }
+      console.log("Updating message bubble with final answer.");
+      loadingText.classList.remove('blinking-text');
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = processMarkdownSegment(finalAnswer);
+      loadingText.innerHTML = tempDiv.innerHTML;
 
-            // ★ 最終的な回答を表示 ★
-            if (loadingRow && loadingText) {
-                console.log("Updating '考え中だゾウ...' message with final answer.");
-                loadingText.classList.remove('blinking-text');
-                const tempDiv = document.createElement('div');
-                tempDiv.innerHTML = processMarkdownSegment(finalAnswer);
-                loadingText.innerHTML = tempDiv.innerHTML;
+      const existingBubble = loadingRow.querySelector('.bubble');
+      if (existingBubble) {
+          const existingTime = existingBubble.querySelector('.bubble-time');
+          if (existingTime) existingTime.remove();
 
-                const existingBubble = loadingRow.querySelector('.bubble');
-                if (existingBubble) {
-                    const existingTime = existingBubble.querySelector('.bubble-time');
-                    if (existingTime) existingTime.remove();
+          const finalBubbleTime = document.createElement('div');
+          finalBubbleTime.classList.add('bubble-time');
+          const finalNow = new Date();
+          const finalHours = finalNow.getHours().toString().padStart(2, '0');
+          const finalMinutes = finalNow.getMinutes().toString().padStart(2, '0');
+          finalBubbleTime.innerText = `${finalHours}:${finalMinutes}`;
+          existingBubble.appendChild(finalBubbleTime);
+          Prism.highlightAllUnder(existingBubble);
+      }
 
-                    const finalBubbleTime = document.createElement('div');
-                    finalBubbleTime.classList.add('bubble-time');
-                    const finalNow = new Date();
-                    const finalHours = finalNow.getHours().toString().padStart(2, '0');
-                    const finalMinutes = finalNow.getMinutes().toString().padStart(2, '0');
-                    finalBubbleTime.innerText = `${finalHours}:${finalMinutes}`;
-                    existingBubble.appendChild(finalBubbleTime);
-                    Prism.highlightAllUnder(existingBubble);
-                }
-            } else {
-                console.log("Adding new message row for final answer (no loading indicator was shown).");
-                const geminiMessageData = {
-                    text: finalAnswer,
-                    sender: 'other',
-                    timestamp: new Date().getTime(),
-                    sources: finalSources
-                };
-                addMessageRow(geminiMessageData);
-            }
-            scrollToBottom();
+      scrollToBottom();
 
-            // ★★★ セッションタイトル要約とバックアップ ★★★
-            if (currentSession && currentSession.title === "無題") {
-                console.log("Current session is untitled, attempting to summarize...");
-                summarizeSessionAsync(currentSession).then(async (summary) => {
-                     if (summary && summary !== "無題") {
-                         currentSession.title = summary;
-                         currentSession.updatedAt = new Date();
-                         console.log("Session title updated by summary:", summary);
+      // ★★★ セッションタイトル要約とバックアップ ★★★
+      if (currentSession && currentSession.title === "無題") {
+          console.log("Current session is untitled, attempting to summarize...");
+          summarizeSessionAsync(currentSession).then(async (summary) => {
+               if (summary && summary !== "無題") {
+                   currentSession.title = summary;
+                   currentSession.updatedAt = new Date();
+                   console.log("Session title updated by summary:", summary);
+                   const summarySessionIndex = conversationSessions.findIndex(s => s.id === currentSession.id);
+                   if (summarySessionIndex > -1) {
+                       conversationSessions[summarySessionIndex].title = currentSession.title;
+                       conversationSessions[summarySessionIndex].updatedAt = currentSession.updatedAt;
+                   }
+                   updateSideMenu();
+                   await backupToFirebase();
+               } else {
+                   await backupToFirebase();
+               }
+          }).catch(async (error) => {
+               console.error("Background session summary failed:", error);
+               await backupToFirebase();
+          });
+      } else {
+           await backupToFirebase();
+      }
 
-                         const summarySessionIndex = conversationSessions.findIndex(s => s.id === currentSession.id);
-                         if (summarySessionIndex > -1) {
-                             conversationSessions[summarySessionIndex].title = currentSession.title;
-                             conversationSessions[summarySessionIndex].updatedAt = currentSession.updatedAt;
-                         }
-                         updateSideMenu();
-                         await backupToFirebase();
-                     } else {
-                         currentSession.updatedAt = new Date();
-                         if (geminiSessionIndex > -1) {
-                            conversationSessions[geminiSessionIndex].updatedAt = currentSession.updatedAt;
-                         }
-                         await backupToFirebase();
-                     }
-                }).catch(async (error) => {
-                     console.error("Background session summary failed:", error);
-                     currentSession.updatedAt = new Date();
-                     if (geminiSessionIndex > -1) {
-                        conversationSessions[geminiSessionIndex].updatedAt = currentSession.updatedAt;
-                     }
-                     await backupToFirebase();
-                });
-            } else {
-                 currentSession.updatedAt = new Date();
-                 if (geminiSessionIndex > -1) {
-                    conversationSessions[geminiSessionIndex].updatedAt = currentSession.updatedAt;
-                 }
-                 await backupToFirebase();
-            }
+  } catch (error) {
+      // ★ 考え中メッセージをクリア/エラー表示に更新 ★
+      clearTimeout(updateTimeout);
+      console.error("Error in callGemini:", error);
 
-        } else {
-            console.error("Received null or invalid response from initial worker call.");
-            // （この部分は、元のロジックにエラーメッセージ表示がありましたが、簡略化のため省略。必要なら復活）
-        }
-
-    } catch (error) {
-        // ★ 考え中メッセージをクリア/エラー表示に更新 ★
-        clearTimeout(updateTimeout);
-        console.error("Error in callGemini:", error);
-        if (loadingRow && loadingText) {
-             loadingText.classList.remove('blinking-text');
-             loadingText.innerText = `エラーが発生しました: ${error.message}`;
-        } else {
-            const errorMessageData = {
-                text: `エラーが発生しました: ${error.message}`,
-                sender: 'other',
-                timestamp: new Date().getTime()
-            };
-            addMessageRow(errorMessageData);
-        }
-        // ★ エラー発生時もバックアップを試みる ★
-        try {
-            await backupToFirebase();
-        } catch (backupError) {
-            console.error("Backup failed after error in callGemini:", backupError);
-        }
-    }
+      const errorBubbleText = `エラーだゾウ: ${error.message}`;
+      if (loadingRow && loadingRow.isConnected) {
+           if(loadingText) {
+              loadingText.classList.remove('blinking-text');
+              loadingText.innerText = errorBubbleText;
+           }
+      } else {
+          addMessageRow({
+              text: errorBubbleText,
+              sender: 'other',
+              timestamp: new Date().getTime()
+          });
+      }
+      // ★ エラー発生時もバックアップを試みる ★
+      try {
+          await backupToFirebase();
+      } catch (backupError) {
+          console.error("Backup failed after error in callGemini:", backupError);
+      }
+  }
 }
 
 // ★ buildRefinementPrompt の修正 (台湾華語モードを考慮) ★

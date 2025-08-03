@@ -1099,7 +1099,7 @@ async function callGemini(userInput, image = null) {
           scrollToBottom();
 
           // --- STEP 1: 画像認識 (汎用的なプロンプトに修正) ---
-          const recognitionPrompt = "この画像に写っている主要な物体、ランドマーク、または人物を最も的確に表す、固有名詞（可能な場合）を含む短いテキストを返してください。";
+          const recognitionPrompt = "この画像を分析してください。もし画像が看板、メニュー、スライドなど、主にテキストで構成されている場合は、そのテキストをすべて書き出してください。もし画像が物体、ランドマーク、人物などの写真である場合は、その対象を最も的確に表す固有名詞（可能な場合）を含む短いテキストを返してください。書き出したテキスト、または対象の名称のみを返し、それ以外の説明は不要です。";
           console.log(`[Step 1] Identifying subject in image...`);
           
           const recognitionData = await callGeminiModelSwitcher(

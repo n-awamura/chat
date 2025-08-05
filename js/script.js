@@ -1053,11 +1053,13 @@ async function callGeminiSummary(prompt, retryCount = 0) {
 
 // ===== メインの Gemini 呼び出し関数 =====
 async function callGemini(userInput, image = null) {
+  let updateTimeout = null; // ★ try...catchの外で宣言
+  let loadingRow = null; // ★ 同じく外で宣言
   try {
       // ★ 考え中メッセージ表示の準備
       const chatMessagesDiv = document.getElementById('chatMessages');
       const delayTime = 2000;
-      let loadingRow = null;
+      // let loadingRow = null; // tryブロックの中から外へ移動
       let loadingText = null;
       
       loadingRow = document.createElement('div');
@@ -1074,8 +1076,8 @@ async function callGemini(userInput, image = null) {
       bubble.appendChild(loadingText);
       loadingRow.appendChild(bubble);
 
-      const updateTimeout = setTimeout(() => {
-          if (!loadingRow.isConnected) {
+      updateTimeout = setTimeout(() => { // ★ let/constを削除
+          if (loadingRow && !loadingRow.isConnected) { // loadingRowの存在チェックを追加
               loadingText.innerText = "考え中だゾウ...";
               chatMessagesDiv.appendChild(loadingRow);
               scrollToBottom();
@@ -1167,7 +1169,9 @@ async function callGemini(userInput, image = null) {
       // ===================================
       //  共通の後処理
       // ===================================
-      clearTimeout(updateTimeout);
+      if (updateTimeout) { // ★ タイムアウトIDが存在すればクリア
+        clearTimeout(updateTimeout);
+      }
 
       if (finalAnswer === null) {
           throw new Error("API応答から回答を抽出できませんでした。");
@@ -1264,7 +1268,9 @@ async function callGemini(userInput, image = null) {
 
   } catch (error) {
       // ★ 考え中メッセージをクリア/エラー表示に更新 ★
-      clearTimeout(updateTimeout);
+      if (updateTimeout) { // ★ タイムアウトIDが存在すればクリア
+        clearTimeout(updateTimeout);
+      }
       console.error("Error in callGemini:", error);
 
       const errorBubbleText = `エラーだゾウ: ${error.message}`;

@@ -946,7 +946,8 @@ async function createNewSession() {
 // async function callGeminiApi(...) { /* 削除 */ }
 
 // Gemini Model Switcher Workerを呼び出す関数 (デフォルトモデル名を 1.5-pro に変更)
-async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', useGrounding = false, toolName = null, image = null, retryCount = 0) {
+// ★ tools 引数を追加
+async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', useGrounding = false, toolName = null, image = null, retryCount = 0, tools = null) {
     const workerUrl = "https://gemini-model-switcher.fudaoxiang-gym.workers.dev"; 
     const maxRetries = 2;
 
@@ -992,6 +993,12 @@ async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', use
                 // ★ 修正: modelName を Worker に渡すためにボディに含める
                 modelName: modelName
             };
+
+            // ★ tools が指定されていれば追加
+            if (tools) {
+                geminiBody.tools = tools;
+            }
+
             requestBody = JSON.stringify(geminiBody); 
             
             // ★ 修正: モデル名をクエリパラメータから削除
@@ -1029,7 +1036,8 @@ async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', use
         const data = await response.json();
         console.log("[DEBUG] Received data from Worker:", JSON.stringify(data, null, 2));
 
-        if (data && data.answer !== undefined) {
+        // ★ answer がなくても functionCall があればOKとする
+        if (data && (data.answer !== undefined || data.functionCall !== undefined)) {
             return data;
         } else {
             console.error("Unexpected response format from worker (expected { answer: ..., sources?: ... }):", data);
@@ -1040,7 +1048,7 @@ async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', use
         console.error(`Error calling Gemini Model Switcher (Attempt ${retryCount + 1}):`, error);
         if (retryCount < maxRetries) {
             await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
-            return callGeminiModelSwitcher(prompt, modelName, useGrounding, toolName, image, retryCount + 1); 
+            return callGeminiModelSwitcher(prompt, modelName, useGrounding, toolName, image, retryCount + 1, tools); 
         } else {
              throw error;
         }
@@ -1145,12 +1153,17 @@ async function callGemini(userInput, image = null) {
           // ===================================
           console.log(`callGemini without Image (1-step process)`);
 
-          const promptToSend = buildPromptFromHistory(false);
+          let promptToSend = buildPromptFromHistory(false);
+          
+          // ★ ユーザーの要望に合わせて、店舗情報の詳細出力を促すシステム指示を追加
+          promptToSend += `\n\n(システム指示: ユーザーが店や場所について尋ねている場合は、Google検索を行い、以下のフォーマットを参考に詳細情報をまとめてください。\n\n[店名]\n種類: [種類]\n特徴・雰囲気: [評価や特徴を詳しく]\n住所: [住所]\n営業時間: [曜日ごとの営業時間]\n\n※情報は検索結果に基づいて正確に記述してください。)`;
+
+          // ★ Grounding (Google Search) を有効化
           const useGrounding = true;
           const targetModel = 'gemini-2.5-flash';
           const toolName = 'googleSearch';
 
-          const data = await callGeminiModelSwitcher(
+          let data = await callGeminiModelSwitcher(
               promptToSend,
               targetModel,
               useGrounding,

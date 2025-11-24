@@ -14,11 +14,20 @@ let allHistoryLoaded = false; // ★ ページネーション用: 全履歴読�
 const INITIAL_LOAD_COUNT = 5; // ★ ページネーション用: 初期読み込み件数 ★
 const LOAD_MORE_COUNT = 5; // ★ ページネーション用: 追加読み込み件数 ★
 let attachedImage = { base64: null, mimeType: null };
-const DEFAULT_USER_LOCATION = {
-  latitude: 35.6209,
-  longitude: 139.6679,
-  label: "東京都目黒区柿の木坂付近"
-};
+
+async function reverseGeocodeLocation(latitude, longitude) {
+  const endpoint = `https://geocode.maps.co/reverse?lat=${encodeURIComponent(latitude)}&lon=${encodeURIComponent(longitude)}&accept-language=ja`;
+  try {
+      const response = await fetch(endpoint);
+      if (!response.ok) {
+          throw new Error(`Reverse geocoding failed with status ${response.status}`);
+      }
+      return await response.json();
+  } catch (error) {
+      console.warn("reverseGeocodeLocation error:", error);
+      return null;
+  }
+}
 
 // ==============================
 // ユーティリティ関数
@@ -497,6 +506,22 @@ async function onSendButton() {
               });
               const { latitude, longitude } = position.coords;
               locationInfo = { latitude, longitude, source: 'geolocation' };
+              const reverseGeocodeResult = await reverseGeocodeLocation(latitude, longitude);
+              if (reverseGeocodeResult) {
+                  locationInfo.displayName = reverseGeocodeResult.display_name;
+                  const address = reverseGeocodeResult.address || {};
+                  const meaningfulParts = [
+                      address.state,
+                      address.city,
+                      address.town,
+                      address.village,
+                      address.suburb,
+                      address.neighbourhood
+                  ].filter((value, index, self) => value && self.indexOf(value) === index);
+                  if (meaningfulParts.length) {
+                      locationInfo.areaLabel = meaningfulParts.join(" ");
+                  }
+              }
               console.log("Got location from browser:", locationInfo);
           } catch (e) {
               console.warn("Failed to get location via geolocation:", e);
@@ -1199,7 +1224,9 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           
           // ★ 位置情報がある場合はプロンプトに追加
           if (locationInfo) {
-              promptToSend += `\n\n(システム情報: ユーザーの現在地は 緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude} （ブラウザの位置情報）です。この地点から半径3km以内の候補のみをGoogle Maps検索で抽出し、距離が大きいものは除外してください。候補ごとに「おおよその距離（km）」も併記してください。直線距離や徒歩/車での所要時間が取得できる場合は記載し、取得できない場合は「距離情報なし」と明記してください。もし3km以内に該当する候補が見つからない場合は、その旨を最初に明記し、代替として5km以内の候補を提示してください。)`;
+              const locationLabel = locationInfo.areaLabel || locationInfo.displayName || '';
+              const labelText = locationLabel ? `${locationLabel} 周辺` : '現在地周辺';
+              promptToSend += `\n\n(システム情報: ユーザーの現在地は${labelText}で、緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude} （ブラウザの位置情報）です。この地点から半径3km以内の候補のみをGoogle Maps検索で抽出し、距離が大きいものは除外してください。候補ごとに「おおよその距離（km）」も併記してください。直線距離や徒歩/車での所要時間が取得できる場合は記載し、取得できない場合は「距離情報なし」と明記してください。もし3km以内に該当する候補が見つからない場合は、その旨を最初に明記し、代替として5km以内の候補を提示してください。)`;
           }
 
           // ★ ユーザーの要望に合わせて、店舗情報の詳細出力を促すシステム指示を追加

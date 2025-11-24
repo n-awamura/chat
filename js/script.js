@@ -1199,7 +1199,7 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           
           // ★ 位置情報がある場合はプロンプトに追加
           if (locationInfo) {
-              promptToSend += `\n\n(システム情報: ユーザーの現在地は 緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude} （ブラウザの位置情報）です。この位置情報を基に「ここから」「近く」といった指示に従い、最寄りの候補を優先して検索してください。直線距離や同じ区内の候補を優先してください。)`;
+              promptToSend += `\n\n(システム情報: ユーザーの現在地は 緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude} （ブラウザの位置情報）です。この地点から半径3km以内の候補のみをGoogle Maps検索で抽出し、距離が大きいものは除外してください。候補ごとに「おおよその距離（km）」も併記してください。直線距離や徒歩/車での所要時間が取得できる場合は記載し、取得できない場合は「距離情報なし」と明記してください。もし3km以内に該当する候補が見つからない場合は、その旨を最初に明記し、代替として5km以内の候補を提示してください。)`;
           }
 
           // ★ ユーザーの要望に合わせて、店舗情報の詳細出力を促すシステム指示を追加

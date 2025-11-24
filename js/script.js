@@ -61,29 +61,34 @@ function processInlineFormatting(text) {
     let escapedText = escapeHtml(text);
 
     // 2. Replace markdown **bold** with <strong> tags
-    // Use a regex that avoids replacing already inside HTML tags (basic check)
     escapedText = escapedText.replace(/(?<!&lt;|<)\*\*(?![*])(.*?)(?<![*])\*\*(?!&gt;|>)/g, (match, content) => {
-        // Avoid double-escaping content if escapeHtml handled '*' specially
-        // Re-escape content just in case, though escapeHtml should handle it
         return `<strong>${escapeHtml(content)}</strong>`;
     });
 
+    // Helper to determine link attributes
+    const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const getLinkAttributes = (url) => {
+        const isMapsUrl = url.includes('maps.google.com') || url.includes('www.google.com/maps');
+        // モバイルでGoogle Mapsの場合は target="_blank" を外してアプリ起動を促す
+        if (isMobile && isMapsUrl) {
+            return `href="${url}" rel="noopener noreferrer"`;
+        }
+        return `href="${url}" target="_blank" rel="noopener noreferrer"`;
+    };
 
-    // 3. Replace URLs with <a> tags
-    // Use a regex that looks for URLs but tries to avoid those already in href attributes
-    const urlRegex = /(?<!href=["'])(https?:\/\/[^\s<>\"]+)/g; // Corrected regex
-    escapedText = escapedText.replace(urlRegex, (url) => {
-        // The URL itself is already escaped from step 1.
-        // We need the raw URL for the href attribute.
-        // Since we escaped first, we need to be careful here.
-        // A simpler approach might be to escape *after* replacements, but that's less safe.
-        // Let's stick to escaping first. The displayed URL will be escaped,
-        // but the href needs the original URL (which we don't have easily after escaping).
-        // Compromise: Use the escaped URL for both display and href. This is safer.
-        return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
-        // If original URL needed: would require more complex parsing before escaping.
+    // 3. Replace Markdown links [text](url) with <a> tags
+    // Regex to capture [text](url)
+    const markdownLinkRegex = /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g;
+    escapedText = escapedText.replace(markdownLinkRegex, (match, linkText, url) => {
+        return `<a ${getLinkAttributes(url)}>${linkText}</a>`;
     });
 
+    // 4. Replace raw URLs with <a> tags (fallback)
+    // Use a regex that looks for URLs but avoids those already in href or inside markdown link parenthesis
+    const urlRegex = /(?<!href=["']|\()(https?:\/\/[^\s<>\"]+)(?!\))/g; 
+    escapedText = escapedText.replace(urlRegex, (url) => {
+        return `<a ${getLinkAttributes(url)}>${url}</a>`;
+    });
 
     return escapedText;
 }

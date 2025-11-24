@@ -14,6 +14,11 @@ let allHistoryLoaded = false; // ★ ページネーション用: 全履歴読�
 const INITIAL_LOAD_COUNT = 5; // ★ ページネーション用: 初期読み込み件数 ★
 const LOAD_MORE_COUNT = 5; // ★ ページネーション用: 追加読み込み件数 ★
 let attachedImage = { base64: null, mimeType: null };
+const DEFAULT_USER_LOCATION = {
+  latitude: 35.6209,
+  longitude: 139.6679,
+  label: "東京都目黒区柿の木坂付近"
+};
 
 // ==============================
 // ユーティリティ関数
@@ -481,18 +486,27 @@ async function onSendButton() {
   // 最後にAIを呼び出す
   // ★ 現在地情報の取得ロジックを追加
   let locationInfo = null;
-  if (message.match(/(ここ|近く|現在地|周辺)/)) {
+  const locationKeywordRegex = /(ここ|近く|現在地|周辺|付近)/;
+  if (locationKeywordRegex.test(message)) {
       console.log("Location keyword detected. Attempting to get current position...");
-      try {
-          const position = await new Promise((resolve, reject) => {
-              navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
-          });
-          const { latitude, longitude } = position.coords;
-          locationInfo = { latitude, longitude };
-          console.log("Got location:", locationInfo);
-      } catch (e) {
-          console.warn("Failed to get location:", e);
-          // 位置情報が取れなくてもエラーにはせず、そのまま進む
+      if (navigator.geolocation) {
+          try {
+              const position = await new Promise((resolve, reject) => {
+                  navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
+              });
+              const { latitude, longitude } = position.coords;
+              locationInfo = { latitude, longitude, source: 'geolocation' };
+              console.log("Got location from browser:", locationInfo);
+          } catch (e) {
+              console.warn("Failed to get location via geolocation:", e);
+          }
+      } else {
+          console.warn("Geolocation API not available in this browser.");
+      }
+
+      if (!locationInfo && DEFAULT_USER_LOCATION) {
+          locationInfo = { ...DEFAULT_USER_LOCATION, source: 'default' };
+          console.log("Using default location fallback:", locationInfo);
       }
   }
 
@@ -1179,7 +1193,11 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           
           // ★ 位置情報がある場合はプロンプトに追加
           if (locationInfo) {
-              promptToSend += `\n\n(システム情報: ユーザーの現在地は 緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude} です。この位置情報を基に「ここから」「近く」などの場所を特定して検索してください。)`;
+              const locationLabel = locationInfo.label ? `${locationInfo.label}（緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude}）` : `緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude}`;
+              const locationSourceNote = locationInfo.source === 'default'
+                ? "（ブラウザの位置情報が取得できなかったため、ユーザーが設定した基準地点です）"
+                : "（ブラウザの位置情報から取得しました）";
+              promptToSend += `\n\n(システム情報: ユーザーの現在地は ${locationLabel} です${locationSourceNote}。この位置情報を基に「ここから」「近く」といった指示に従い、最寄りの候補を優先して検索してください。直線距離や同じ区内の候補を優先してください。)`;
           }
 
           // ★ ユーザーの要望に合わせて、店舗情報の詳細出力を促すシステム指示を追加

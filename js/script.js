@@ -486,6 +486,7 @@ async function onSendButton() {
   // 最後にAIを呼び出す
   // ★ 現在地情報の取得ロジックを追加
   let locationInfo = null;
+  let locationWarningMessage = null;
   const locationKeywordRegex = /(ここ|近く|現在地|周辺|付近)/;
   if (locationKeywordRegex.test(message)) {
       console.log("Location keyword detected. Attempting to get current position...");
@@ -499,15 +500,20 @@ async function onSendButton() {
               console.log("Got location from browser:", locationInfo);
           } catch (e) {
               console.warn("Failed to get location via geolocation:", e);
+              locationWarningMessage = "現在地の取得が許可されなかったため、場所の検索は大まかな結果になるかもしれないゾウ。ブラウザの位置情報設定を確認してみてね。";
           }
       } else {
           console.warn("Geolocation API not available in this browser.");
+          locationWarningMessage = "このブラウザでは現在地の取得がサポートされていないゾウ。";
       }
+  }
 
-      if (!locationInfo && DEFAULT_USER_LOCATION) {
-          locationInfo = { ...DEFAULT_USER_LOCATION, source: 'default' };
-          console.log("Using default location fallback:", locationInfo);
-      }
+  if (locationWarningMessage) {
+      addMessageRow({
+          text: locationWarningMessage,
+          sender: 'other',
+          timestamp: new Date().getTime()
+      });
   }
 
   await callGemini(message, imageToSend, locationInfo);
@@ -1193,11 +1199,7 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           
           // ★ 位置情報がある場合はプロンプトに追加
           if (locationInfo) {
-              const locationLabel = locationInfo.label ? `${locationInfo.label}（緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude}）` : `緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude}`;
-              const locationSourceNote = locationInfo.source === 'default'
-                ? "（ブラウザの位置情報が取得できなかったため、ユーザーが設定した基準地点です）"
-                : "（ブラウザの位置情報から取得しました）";
-              promptToSend += `\n\n(システム情報: ユーザーの現在地は ${locationLabel} です${locationSourceNote}。この位置情報を基に「ここから」「近く」といった指示に従い、最寄りの候補を優先して検索してください。直線距離や同じ区内の候補を優先してください。)`;
+              promptToSend += `\n\n(システム情報: ユーザーの現在地は 緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude} （ブラウザの位置情報）です。この位置情報を基に「ここから」「近く」といった指示に従い、最寄りの候補を優先して検索してください。直線距離や同じ区内の候補を優先してください。)`;
           }
 
           // ★ ユーザーの要望に合わせて、店舗情報の詳細出力を促すシステム指示を追加

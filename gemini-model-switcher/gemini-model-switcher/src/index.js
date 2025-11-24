@@ -37,7 +37,12 @@ export default {
 			requestBody.tools.push({
 			  googleSearch: {},
 			});
-		  }
+		  } else if (toolName === "googleMaps") {
+            // Google Maps Grounding (Official Spec)
+            requestBody.tools.push({
+			  googleMaps: {},
+			});
+          }
   
 		  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
   
@@ -114,10 +119,13 @@ export default {
   
 		  const json = await geminiRes.json();
 		  // Gemini APIの応答形式に合わせてアンサーとソースを取得
-		  const answer = json?.candidates?.[0]?.content?.parts?.[0]?.text || "応答がありませんでした。";
-		  const sources = json?.candidates?.[0]?.groundingMetadata?.webSearchQueries;
+		  const candidate = json?.candidates?.[0];
+		  const part = candidate?.content?.parts?.[0];
+		  const answer = part?.text;
+		  const functionCall = part?.functionCall;
+		  const sources = candidate?.groundingMetadata?.webSearchQueries;
   
-		  return new Response(JSON.stringify({ answer, sources }), {
+		  return new Response(JSON.stringify({ answer, sources, functionCall }), {
 			status: 200,
 			headers: corsHeaders,
 		  });

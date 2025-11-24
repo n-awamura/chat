@@ -1156,12 +1156,13 @@ async function callGemini(userInput, image = null) {
           let promptToSend = buildPromptFromHistory(false);
           
           // ★ ユーザーの要望に合わせて、店舗情報の詳細出力を促すシステム指示を追加
-          promptToSend += `\n\n(システム指示: ユーザーが店や場所について尋ねている場合は、Google検索を行い、以下のフォーマットを参考に詳細情報をまとめてください。\n\n[店名]\n種類: [種類]\n特徴・雰囲気: [評価や特徴を詳しく]\n住所: [住所]\n営業時間: [曜日ごとの営業時間]\n\n※情報は検索結果に基づいて正確に記述してください。)`;
+          promptToSend += `\n\n(システム指示: ユーザーが店や場所について尋ねている場合は、Google Mapsの情報を優先して検索し、以下のフォーマットを参考に詳細情報をまとめてください。\n\n[店名]\n種類: [種類]\n特徴・雰囲気: [評価や特徴を詳しく]\n住所: [住所]\n営業時間: [曜日ごとの営業時間]\n\n※情報は検索結果に基づいて正確に記述してください。)`;
 
-          // ★ Grounding (Google Search) を有効化
+          // ★ Grounding (Google Maps) を有効化
+          // 実装上は googleSearch ツールを使用するが、意図として Maps 情報を要求する
           const useGrounding = true;
           const targetModel = 'gemini-2.5-flash';
-          const toolName = 'googleSearch';
+          const toolName = 'googleMaps';
 
           let data = await callGeminiModelSwitcher(
               promptToSend,

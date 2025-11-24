@@ -1237,7 +1237,7 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           if (locationInfo) {
               const locationLabel = locationInfo.areaLabel || locationInfo.displayName || '';
               const labelText = locationLabel ? `${locationLabel} 周辺` : '現在地周辺';
-              promptToSend += `\n\n(システム情報: ユーザーの現在地は${labelText}で、緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude} （ブラウザの位置情報）です。この地点から半径3km以内の候補のみをGoogle Maps検索で抽出し、距離が大きいものは除外してください。候補ごとに「おおよその距離（km）」も併記してください。直線距離や徒歩/車での所要時間が取得できる場合は記載し、取得できない場合は「距離情報なし」と明記してください。もし3km以内に該当する候補が見つからない場合は、その旨を最初に明記し、代替として5km以内の候補を提示してください。)`;
+              promptToSend += `\n\n(システム情報: ユーザーの現在地は${labelText}で、緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude} （ブラウザの位置情報）です。この地点から半径1km以内の候補のみをGoogle Maps検索で厳選し、複数（少なくとも3件）見つけてください。同じ建物や系列が複数存在する場合もすべて挙げてください。候補ごとに「おおよその距離（km）」や徒歩/車の所要時間を必ず記載し、取得できない場合は「距離情報なし」と明記してください。もし1km以内に該当する候補が見つからない場合は、その旨を最初に明記し、代替として2km以内の候補を提示してください。2kmでも見つからない場合のみ、理由を明記してリストアップを中止してください。)`;
           }
 
           // ★ ユーザーの要望に合わせて、店舗情報の詳細出力を促すシステム指示を追加

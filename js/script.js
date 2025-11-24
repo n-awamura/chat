@@ -16,9 +16,20 @@ const LOAD_MORE_COUNT = 5; // ★ ページネーション用: 追加読み込�
 let attachedImage = { base64: null, mimeType: null };
 
 async function reverseGeocodeLocation(latitude, longitude) {
-  const endpoint = `https://geocode.maps.co/reverse?lat=${encodeURIComponent(latitude)}&lon=${encodeURIComponent(longitude)}&accept-language=ja`;
+  const params = new URLSearchParams({
+      lat: latitude,
+      lon: longitude,
+      format: "json",
+      "accept-language": "ja",
+      zoom: "15"
+  });
+  const endpoint = `https://nominatim.openstreetmap.org/reverse?${params.toString()}`;
   try {
-      const response = await fetch(endpoint);
+      const response = await fetch(endpoint, {
+          headers: {
+              "Accept": "application/json"
+          }
+      });
       if (!response.ok) {
           throw new Error(`Reverse geocoding failed with status ${response.status}`);
       }

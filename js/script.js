@@ -479,7 +479,24 @@ async function onSendButton() {
   }
 
   // 最後にAIを呼び出す
-  await callGemini(message, imageToSend);
+  // ★ 現在地情報の取得ロジックを追加
+  let locationInfo = null;
+  if (message.match(/(ここ|近く|現在地|周辺)/)) {
+      console.log("Location keyword detected. Attempting to get current position...");
+      try {
+          const position = await new Promise((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
+          });
+          const { latitude, longitude } = position.coords;
+          locationInfo = { latitude, longitude };
+          console.log("Got location:", locationInfo);
+      } catch (e) {
+          console.warn("Failed to get location:", e);
+          // 位置情報が取れなくてもエラーにはせず、そのまま進む
+      }
+  }
+
+  await callGemini(message, imageToSend, locationInfo);
 }
 
 async function toggleSideMenu() {
@@ -1065,7 +1082,7 @@ async function callGeminiSummary(prompt, retryCount = 0) {
 }
 
 // ===== メインの Gemini 呼び出し関数 =====
-async function callGemini(userInput, image = null) {
+async function callGemini(userInput, image = null, locationInfo = null) {
   let updateTimeout = null; // ★ try...catchの外で宣言
   let loadingRow = null; // ★ 同じく外で宣言
   try {
@@ -1160,6 +1177,11 @@ async function callGemini(userInput, image = null) {
 
           let promptToSend = buildPromptFromHistory(false);
           
+          // ★ 位置情報がある場合はプロンプトに追加
+          if (locationInfo) {
+              promptToSend += `\n\n(システム情報: ユーザーの現在地は 緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude} です。この位置情報を基に「ここから」「近く」などの場所を特定して検索してください。)`;
+          }
+
           // ★ ユーザーの要望に合わせて、店舗情報の詳細出力を促すシステム指示を追加
           promptToSend += `\n\n(システム指示: ユーザーが店や場所について尋ねている場合は、Google Mapsの情報を優先して検索し、以下のフォーマットを参考に詳細情報をまとめてください。\n\n[店名]\n種類: [種類]\n特徴・雰囲気: [★重要: レビューの件数と評価点（例: 24件のレビューで4.8）に必ず言及してください]。その他、店の特徴や雰囲気。\n住所: [住所](Google Mapsの検索結果URL) ※住所部分は必ずMarkdownのリンク形式 [住所](URL) にしてください。\n営業時間: [曜日ごとの営業時間]\n\n※情報は検索結果に基づいて正確に記述してください。)`;
 

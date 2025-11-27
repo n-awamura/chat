@@ -69,7 +69,7 @@ function getPlacesStructuredOutputSchema() {
                       },
                       address: {
                           type: "string",
-                          description: "日本語住所。丁目や建物名まで可能な限り詳しく。"
+                          description: "必ず日本語で表記した住所（例: 〒123-4567 東京都目黒区○○1-2-3 ビル名）。ローマ字は禁止。"
                       },
                       mapUrl: {
                           type: "string",
@@ -1387,7 +1387,7 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           }
 
           // ★ ユーザーの要望に合わせて、店舗情報の詳細出力を促すシステム指示を追加
-          promptToSend += `\n\n(システム指示: ユーザーが店や場所について尋ねている場合は、Google Mapsの情報を優先して検索し、以下のフォーマットを参考に詳細情報をまとめてください。\n\n[店名]\n種類: [種類]\n特徴・雰囲気: [★重要: レビューの件数と評価点（例: 24件のレビューで4.8）に必ず言及してください]。その他、店の特徴や雰囲気。\n住所: [住所](Google Mapsの検索結果URL) ※住所部分は必ずMarkdownのリンク形式 [住所](URL) にしてください。\n営業時間: [曜日ごとの営業時間]\n\n※情報は検索結果に基づいて正確に記述してください。)`;
+          promptToSend += `\n\n(システム指示: ユーザーが店や場所について尋ねている場合は、Google Mapsの情報を優先して検索し、以下のフォーマットを参考に詳細情報をまとめてください。\n\n[店名]\n種類: [種類]\n特徴・雰囲気: [★重要: レビューの件数と評価点（例: 24件のレビューで4.8）に必ず言及してください]。その他、店の特徴や雰囲気。\n住所: [日本語住所](Google Mapsの検索結果URL) ※住所は必ず「〒123-4567 東京都〇〇区〇〇…」のような完全な日本語表記で記述し、Markdownのリンク形式 [住所](URL) にしてください。ローマ字表記は禁止です。\n営業時間: [曜日ごとの営業時間]\n\n※情報は検索結果に基づいて正確に記述してください。)`;
 
           const targetModel = 'gemini-2.5-flash';
           const googleMapsTools = [{ googleMaps: {} }];

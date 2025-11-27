@@ -216,6 +216,27 @@ async function convertMapsAnswerToStructured(rawText) {
   }
 }
 
+function animateStreamingText(text, element, onComplete, chunkSize = 2, intervalMs = 25) {
+  if (!element) {
+      if (typeof onComplete === 'function') onComplete();
+      return;
+  }
+  if (!text) {
+      if (typeof onComplete === 'function') onComplete();
+      return;
+  }
+  element.textContent = "";
+  let index = 0;
+  const timer = setInterval(() => {
+      element.textContent += text.slice(index, index + chunkSize);
+      index += chunkSize;
+      if (index >= text.length) {
+          clearInterval(timer);
+          if (typeof onComplete === 'function') onComplete();
+      }
+  }, intervalMs);
+}
+
 // ==============================
 // ユーティリティ関数
 // ==============================
@@ -623,10 +644,20 @@ async function endCurrentSession() {
 async function onSendButton() {
   console.log("onSendButton called");
   const input = document.getElementById('chatInput');
-  const message = input.value.trim();
+  let message = input.value.trim();
   const hasImage = attachedImage.base64 && attachedImage.mimeType;
 
   if (!message && !hasImage) return;
+
+  const streamingKeyword = "ストリーミング";
+  let streamingDisplayRequested = false;
+  if (message && message.endsWith(streamingKeyword)) {
+      const trimmedMessage = message.slice(0, -streamingKeyword.length).trim();
+      if (trimmedMessage) {
+          streamingDisplayRequested = true;
+          message = trimmedMessage;
+      }
+  }
 
   // ★★★ FIX: AIに渡す前に画像がクリアされるのを防ぐ ★★★
   // 送信時点の画像データをローカル変数にコピーして保持する
@@ -728,7 +759,7 @@ async function onSendButton() {
       });
   }
 
-  await callGemini(message, imageToSend, locationInfo);
+  await callGemini(message, imageToSend, locationInfo, streamingDisplayRequested);
 }
 
 async function toggleSideMenu() {
@@ -1317,7 +1348,7 @@ async function callGeminiSummary(prompt, retryCount = 0) {
 }
 
 // ===== メインの Gemini 呼び出し関数 =====
-async function callGemini(userInput, image = null, locationInfo = null) {
+async function callGemini(userInput, image = null, locationInfo = null, streamDisplay = false) {
   let updateTimeout = null; // ★ try...catchの外で宣言
   let loadingRow = null; // ★ 同じく外で宣言
   let loadingText = null;
@@ -1501,21 +1532,31 @@ async function callGemini(userInput, image = null, locationInfo = null) {
       loadingText.classList.remove('blinking-text');
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = processMarkdownSegment(finalAnswer);
-      loadingText.innerHTML = tempDiv.innerHTML;
+      const finalHtml = tempDiv.innerHTML;
+      const plainTextForStreaming = tempDiv.textContent || tempDiv.innerText || "";
 
-      const existingBubble = loadingRow.querySelector('.bubble');
-      if (existingBubble) {
-          const existingTime = existingBubble.querySelector('.bubble-time');
-          if (existingTime) existingTime.remove();
+      const renderFinalBubble = () => {
+          loadingText.innerHTML = finalHtml;
+          const existingBubble = loadingRow.querySelector('.bubble');
+          if (existingBubble) {
+              const existingTime = existingBubble.querySelector('.bubble-time');
+              if (existingTime) existingTime.remove();
 
-          const finalBubbleTime = document.createElement('div');
-          finalBubbleTime.classList.add('bubble-time');
-          const finalNow = new Date();
-          const finalHours = finalNow.getHours().toString().padStart(2, '0');
-          const finalMinutes = finalNow.getMinutes().toString().padStart(2, '0');
-          finalBubbleTime.innerText = `${finalHours}:${finalMinutes}`;
-          existingBubble.appendChild(finalBubbleTime);
-          Prism.highlightAllUnder(existingBubble);
+              const finalBubbleTime = document.createElement('div');
+              finalBubbleTime.classList.add('bubble-time');
+              const finalNow = new Date();
+              const finalHours = finalNow.getHours().toString().padStart(2, '0');
+              const finalMinutes = finalNow.getMinutes().toString().padStart(2, '0');
+              finalBubbleTime.innerText = `${finalHours}:${finalMinutes}`;
+              existingBubble.appendChild(finalBubbleTime);
+              Prism.highlightAllUnder(existingBubble);
+          }
+      };
+
+      if (streamDisplay && plainTextForStreaming) {
+          animateStreamingText(plainTextForStreaming, loadingText, renderFinalBubble);
+      } else {
+          renderFinalBubble();
       }
 
       scrollToBottom();

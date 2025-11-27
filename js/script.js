@@ -183,6 +183,39 @@ function formatPlacesStructuredResult(structuredResult) {
   return sections.join("\n\n");
 }
 
+async function convertMapsAnswerToStructured(rawText) {
+  if (!rawText || typeof rawText !== "string") {
+      return null;
+  }
+
+  const schema = getPlacesStructuredOutputSchema();
+  const prompt = `以下のGoogle Maps検索結果テキストを、指定のJSONスキーマに厳密に従って構造化してください。`
+    + `住所フィールドは必ず完全な日本語表記（例: 〒123-4567 東京都◯◯区◯◯1-2-3 ビル名）に変換し、ローマ字は使わないでください。`
+    + `距離や営業時間が明記されていない場合は空欄や「距離情報なし」ではなく、スキーマの説明に沿った適切な文字列を入力してください。`
+    + `\n\n---\n${rawText}\n---\n`;
+
+  try {
+      const generationConfig = {
+          responseMimeType: "application/json",
+          responseSchema: schema
+      };
+      const structuredResponse = await callGeminiModelSwitcher(
+          prompt,
+          'gemini-2.5-flash',
+          false,
+          null,
+          null,
+          0,
+          null,
+          generationConfig
+      );
+      return parseStructuredPlacesAnswer(structuredResponse?.answer);
+  } catch (error) {
+      console.warn("convertMapsAnswerToStructured failed:", error);
+      return null;
+  }
+}
+
 // ==============================
 // ユーティリティ関数
 // ==============================
@@ -1287,12 +1320,12 @@ async function callGeminiSummary(prompt, retryCount = 0) {
 async function callGemini(userInput, image = null, locationInfo = null) {
   let updateTimeout = null; // ★ try...catchの外で宣言
   let loadingRow = null; // ★ 同じく外で宣言
+  let loadingText = null;
   try {
       // ★ 考え中メッセージ表示の準備
       const chatMessagesDiv = document.getElementById('chatMessages');
       const delayTime = 2000;
       // let loadingRow = null; // tryブロックの中から外へ移動
-      let loadingText = null;
       
       loadingRow = document.createElement('div');
       loadingRow.classList.add('message-row', 'other');
@@ -1390,30 +1423,22 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           promptToSend += `\n\n(システム指示: ユーザーが店や場所について尋ねている場合は、Google Mapsの情報を優先して検索し、以下のフォーマットを参考に詳細情報をまとめてください。\n\n[店名]\n種類: [種類]\n特徴・雰囲気: [★重要: レビューの件数と評価点（例: 24件のレビューで4.8）に必ず言及してください]。その他、店の特徴や雰囲気。\n住所: [日本語住所](Google Mapsの検索結果URL) ※住所は必ず「〒123-4567 東京都〇〇区〇〇…」のような完全な日本語表記で記述し、Markdownのリンク形式 [住所](URL) にしてください。ローマ字表記は禁止です。\n営業時間: [曜日ごとの営業時間]\n\n※情報は検索結果に基づいて正確に記述してください。)`;
 
           const targetModel = 'gemini-2.5-flash';
-          const googleMapsTools = [{ googleMaps: {} }];
-          const structuredOutputConfig = {
-              responseMimeType: "application/json",
-              responseSchema: getPlacesStructuredOutputSchema()
-          };
-
-          let data = await callGeminiModelSwitcher(
+          const data = await callGeminiModelSwitcher(
               promptToSend,
               targetModel,
-              false,
-              null,
-              null,
-              0,
-              googleMapsTools,
-              structuredOutputConfig
+              true,
+              'googleMaps',
+              null
           );
-          const structuredResult = parseStructuredPlacesAnswer(data?.answer);
+          const rawMapsAnswer = data?.answer || "";
+          const structuredResult = await convertMapsAnswerToStructured(rawMapsAnswer);
           
           if (data && data.answer !== undefined) {
               if (structuredResult) {
                   const formatted = formatPlacesStructuredResult(structuredResult);
-                  finalAnswer = formatted || data.answer;
+                  finalAnswer = formatted || rawMapsAnswer;
               } else {
-                  finalAnswer = data.answer;
+                  finalAnswer = rawMapsAnswer;
               }
               finalSources = data.sources;
           } else {

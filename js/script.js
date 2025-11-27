@@ -40,6 +40,149 @@ async function reverseGeocodeLocation(latitude, longitude) {
   }
 }
 
+function getPlacesStructuredOutputSchema() {
+  return {
+      type: "object",
+      properties: {
+          summary: {
+              type: "string",
+              description: "検索結果の概要や補足。ユーザーへ伝える冒頭文。"
+          },
+          fallbackReason: {
+              type: "string",
+              description: "希望半径内に十分な候補がない場合の理由説明。"
+          },
+          places: {
+              type: "array",
+              minItems: 1,
+              description: "ユーザーへ提示する店舗リスト。距離が近い順に並べること。",
+              items: {
+                  type: "object",
+                  properties: {
+                      name: {
+                          type: "string",
+                          description: "店舗名（公式名称）。"
+                      },
+                      genre: {
+                          type: "string",
+                          description: "ジャンルやカテゴリ（例: 寿司、和食、テイクアウト専門など）。"
+                      },
+                      address: {
+                          type: "string",
+                          description: "日本語住所。丁目や建物名まで可能な限り詳しく。"
+                      },
+                      mapUrl: {
+                          type: "string",
+                          format: "uri",
+                          description: "Google Maps の共有URL。"
+                      },
+                      distanceKm: {
+                          type: "number",
+                          description: "ユーザー現在地からの概算距離 (km)。小数第1位まで。"
+                      },
+                      travelTime: {
+                          type: "string",
+                          description: "徒歩や車の所要時間。取得不可なら空文字。"
+                      },
+                      reviewSummary: {
+                          type: "string",
+                          description: "レビュー件数と評価(例: 120件のレビューで4.3)。必須。"
+                      },
+                      reviewHighlights: {
+                          type: "string",
+                          description: "口コミ傾向や雰囲気を短く要約。"
+                      },
+                      hours: {
+                          type: "array",
+                          description: "曜日ごとの営業時間一覧。",
+                          items: {
+                              type: "object",
+                              properties: {
+                                  day: { type: "string", description: "曜日名。例: 月曜日" },
+                                  time: { type: "string", description: "営業時間。例: 11:00～21:00 / 定休日" }
+                              },
+                              required: ["day", "time"]
+                          }
+                      },
+                      notes: {
+                          type: "string",
+                          description: "予約可否、子供連れ可否などその他特記事項。"
+                      },
+                      isWithinPrimaryRadius: {
+                          type: "boolean",
+                          description: "1km以内ならtrue、2kmへのフォールバックならfalse。"
+                      }
+                  },
+                  required: ["name", "genre", "address", "mapUrl", "reviewSummary", "hours"]
+              }
+          }
+      },
+      required: ["places"]
+  };
+}
+
+function parseStructuredPlacesAnswer(answerText) {
+  if (!answerText) return null;
+  try {
+      return typeof answerText === "string" ? JSON.parse(answerText) : answerText;
+  } catch (error) {
+      console.warn("Failed to parse structured output JSON:", error);
+      return null;
+  }
+}
+
+function formatPlacesStructuredResult(structuredResult) {
+  if (!structuredResult || !Array.isArray(structuredResult.places)) {
+      return null;
+  }
+
+  const sections = [];
+  if (structuredResult.summary) {
+      sections.push(structuredResult.summary);
+  }
+  if (structuredResult.fallbackReason) {
+      sections.push(`※${structuredResult.fallbackReason}`);
+  }
+
+  structuredResult.places.forEach((place) => {
+      const lines = [];
+      lines.push(`**${place.name}**`);
+      if (place.genre) {
+          lines.push(`種類: ${place.genre}`);
+      }
+      if (typeof place.distanceKm === "number" || place.travelTime) {
+          const distanceParts = [];
+          if (typeof place.distanceKm === "number") {
+              distanceParts.push(`${place.distanceKm.toFixed(1)}km`);
+          }
+          if (place.travelTime) {
+              distanceParts.push(place.travelTime);
+          }
+          if (distanceParts.length) {
+              lines.push(`距離: ${distanceParts.join(" / ")}`);
+          }
+      }
+      const addressLink = place.mapUrl ? `[${place.address}](${place.mapUrl})` : place.address;
+      lines.push(`住所: ${addressLink}`);
+      if (place.reviewSummary || place.reviewHighlights) {
+          const reviewLineParts = [];
+          if (place.reviewSummary) reviewLineParts.push(place.reviewSummary);
+          if (place.reviewHighlights) reviewLineParts.push(place.reviewHighlights);
+          lines.push(`口コミ: ${reviewLineParts.join(" / ")}`);
+      }
+      if (Array.isArray(place.hours) && place.hours.length > 0) {
+          const hoursLines = place.hours.map((hour) => `- ${hour.day}: ${hour.time}`).join("\n");
+          lines.push(`営業時間:\n${hoursLines}`);
+      }
+      if (place.notes) {
+          lines.push(`備考: ${place.notes}`);
+      }
+      sections.push(lines.join("\n"));
+  });
+
+  return sections.join("\n\n");
+}
+
 // ==============================
 // ユーティリティ関数
 // ==============================
@@ -1025,7 +1168,7 @@ async function createNewSession() {
 
 // Gemini Model Switcher Workerを呼び出す関数 (デフォルトモデル名を 1.5-pro に変更)
 // ★ tools 引数を追加
-async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', useGrounding = false, toolName = null, image = null, retryCount = 0, tools = null) {
+async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', useGrounding = false, toolName = null, image = null, retryCount = 0, tools = null, generationConfig = null) {
     const workerUrl = "https://gemini-model-switcher.fudaoxiang-gym.workers.dev"; 
     const maxRetries = 2;
 
@@ -1075,6 +1218,9 @@ async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', use
             // ★ tools が指定されていれば追加
             if (tools) {
                 geminiBody.tools = tools;
+            }
+            if (generationConfig) {
+                geminiBody.generationConfig = generationConfig;
             }
 
             requestBody = JSON.stringify(geminiBody); 
@@ -1126,7 +1272,7 @@ async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', use
         console.error(`Error calling Gemini Model Switcher (Attempt ${retryCount + 1}):`, error);
         if (retryCount < maxRetries) {
             await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
-            return callGeminiModelSwitcher(prompt, modelName, useGrounding, toolName, image, retryCount + 1, tools); 
+            return callGeminiModelSwitcher(prompt, modelName, useGrounding, toolName, image, retryCount + 1, tools, generationConfig); 
         } else {
              throw error;
         }
@@ -1243,22 +1389,46 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           // ★ ユーザーの要望に合わせて、店舗情報の詳細出力を促すシステム指示を追加
           promptToSend += `\n\n(システム指示: ユーザーが店や場所について尋ねている場合は、Google Mapsの情報を優先して検索し、以下のフォーマットを参考に詳細情報をまとめてください。\n\n[店名]\n種類: [種類]\n特徴・雰囲気: [★重要: レビューの件数と評価点（例: 24件のレビューで4.8）に必ず言及してください]。その他、店の特徴や雰囲気。\n住所: [住所](Google Mapsの検索結果URL) ※住所部分は必ずMarkdownのリンク形式 [住所](URL) にしてください。\n営業時間: [曜日ごとの営業時間]\n\n※情報は検索結果に基づいて正確に記述してください。)`;
 
-          // ★ Grounding (Google Maps) を有効化
-          // 実装上は googleSearch ツールを使用するが、意図として Maps 情報を要求する
-          const useGrounding = true;
           const targetModel = 'gemini-2.5-flash';
-          const toolName = 'googleMaps';
+          let data;
+          let structuredResult = null;
 
-          let data = await callGeminiModelSwitcher(
-              promptToSend,
-              targetModel,
-              useGrounding,
-              toolName,
-              null // No image
-          );
+          if (locationInfo) {
+              const googleMapsTools = [{ googleMaps: {} }];
+              const structuredOutputConfig = {
+                  responseMimeType: "application/json",
+                  responseSchema: getPlacesStructuredOutputSchema()
+              };
+              data = await callGeminiModelSwitcher(
+                  promptToSend,
+                  targetModel,
+                  false,
+                  null,
+                  null,
+                  0,
+                  googleMapsTools,
+                  structuredOutputConfig
+              );
+              structuredResult = parseStructuredPlacesAnswer(data?.answer);
+          } else {
+              const useGrounding = true;
+              const toolName = 'googleMaps';
+              data = await callGeminiModelSwitcher(
+                  promptToSend,
+                  targetModel,
+                  useGrounding,
+                  toolName,
+                  null
+              );
+          }
           
           if (data && data.answer !== undefined) {
-              finalAnswer = data.answer;
+              if (structuredResult) {
+                  const formatted = formatPlacesStructuredResult(structuredResult);
+                  finalAnswer = formatted || data.answer;
+              } else {
+                  finalAnswer = data.answer;
+              }
               finalSources = data.sources;
           } else {
                throw new Error("APIから有効な応答がありませんでした。");

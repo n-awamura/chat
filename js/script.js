@@ -1679,6 +1679,8 @@ async function callGemini(userInput, image = null, locationInfo = null) {
       if (loadingProgressContainer) {
           loadingProgressContainer.classList.add('loading-progress-complete');
           setLoadingProgress && setLoadingProgress(100, '完了', { showPercent: false });
+          loadingProgressContainer.remove();
+          loadingProgressContainer = null;
       }
 
       const existingBubble = loadingRow.querySelector('.bubble');

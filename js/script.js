@@ -243,6 +243,7 @@ async function convertMapsAnswerToStructured(rawText) {
   const schema = getPlacesStructuredOutputSchema();
   const prompt = `以下のGoogle Maps検索結果テキストを、指定のJSONスキーマに厳密に従って構造化してください。`
     + `住所フィールドは必ず完全な日本語表記（例: 〒123-4567 東京都◯◯区◯◯1-2-3 ビル名）に変換し、ローマ字は使わないでください。`
+    + `店名は可能な限り正式な日本語表記（漢字/カナ）に揃えてください。英語表記しか取得できない場合は検索結果から日本語名を補完し、それも無理な場合のみカタカナ転写を行い、英語単独の表記は避けてください。`
     + `mapUrl には必ず https://www.google.com/maps/ 形式のURLを用いてください。短縮URL（maps.app.goo.gl 等）しか取得できない場合は、店名と住所で検索クエリを組み立てた https://www.google.com/maps/search/?api=1&query=... 形式を生成してください。`
     + `距離や営業時間が明記されていない場合は空欄や「距離情報なし」ではなく、スキーマの説明に沿った適切な文字列を入力してください。`
     + `\n\n---\n${rawText}\n---\n`;

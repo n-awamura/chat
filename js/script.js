@@ -722,13 +722,14 @@ async function onSendButton() {
   let locationInfo = null;
   let locationWarningMessage = null;
   const nearKeywordRegex = /(ここ|近く|近所|近辺|周辺|付近|この辺|このへん|近い|近場|around|near)/i;
-  const shouldAttemptLocation = nearKeywordRegex.test(message);
+  const nearKeywordDetected = nearKeywordRegex.test(message);
+  const shouldAttemptLocation = nearKeywordDetected;
   if (shouldAttemptLocation) {
       console.log("Location keyword detected. Attempting to get current position...");
       if (navigator.geolocation) {
           try {
               const position = await new Promise((resolve, reject) => {
-                  navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
+                  navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000 });
               });
               const { latitude, longitude } = position.coords;
               locationInfo = { latitude, longitude, source: 'geolocation' };
@@ -767,7 +768,11 @@ async function onSendButton() {
       });
   }
 
-  await callGemini(message, imageToSend, locationInfo);
+  let userInputForCall = message;
+  if (!locationInfo && nearKeywordDetected) {
+      userInputForCall += "\n(位置情報が取得できなかったため、ユーザー入力に含まれる地名・駅名を起点に、まず半径1km、見つからない場合は2kmで飲食店を検索してください。現在地は不明です。)";
+  }
+  await callGemini(userInputForCall, imageToSend, locationInfo);
 }
 
 async function toggleSideMenu() {

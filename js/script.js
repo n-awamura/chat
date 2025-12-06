@@ -1325,12 +1325,20 @@ async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', use
 
         if (!response.ok) {
              const errorText = await response.text();
-            console.error(`Worker Error (${response.status}): ${errorText}`);
-            let errorMessage = `Worker request failed with status ${response.status}`;
+            const baseMessage = `Worker request failed with status ${response.status}`;
+            let errorMessage = baseMessage;
             try {
                 const errorJson = JSON.parse(errorText);
                 if (errorJson.error) errorMessage += `: ${errorJson.error}`;
-            } catch (e) { /* ignore */ }
+            } catch (e) {
+                // 非JSON応答の場合もそのまま扱う
+            }
+            if (response.status >= 500 && retryCount < maxRetries) {
+                console.warn(`Worker Error (${response.status}) - retrying (${retryCount + 1}/${maxRetries}): ${errorText}`);
+                await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+                return callGeminiModelSwitcher(prompt, modelName, useGrounding, toolName, image, retryCount + 1, tools, generationConfig);
+            }
+            console.error(`Worker Error (${response.status}): ${errorText}`);
             throw new Error(errorMessage);
         }
 

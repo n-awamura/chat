@@ -131,6 +131,27 @@ function parseStructuredPlacesAnswer(answerText) {
   }
 }
 
+function createCopyMessageButton(textToCopy) {
+    const copyMsgBtn = document.createElement('button');
+    copyMsgBtn.classList.add('copy-msg-btn');
+    copyMsgBtn.innerHTML = '<i class="bi bi-clipboard"></i>';
+    copyMsgBtn.title = 'メッセージをコピー';
+    copyMsgBtn.addEventListener('click', () => {
+        if (!textToCopy) return;
+        navigator.clipboard.writeText(textToCopy)
+            .then(() => {
+                copyMsgBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
+                copyMsgBtn.title = 'コピーしました';
+                setTimeout(() => {
+                    copyMsgBtn.innerHTML = '<i class="bi bi-clipboard"></i>';
+                    copyMsgBtn.title = 'メッセージをコピー';
+                }, 1500);
+            })
+            .catch(err => console.error('コピー失敗:', err));
+    });
+    return copyMsgBtn;
+}
+
 function formatPlacesStructuredResult(structuredResult) {
   if (!structuredResult || !Array.isArray(structuredResult.places)) {
       return null;
@@ -162,7 +183,8 @@ function formatPlacesStructuredResult(structuredResult) {
               lines.push(`距離: ${distanceParts.join(" / ")}`);
           }
       }
-      const addressLink = place.mapUrl ? `[${place.address}](${place.mapUrl})` : place.address;
+      const safeMapUrl = getSafeGoogleMapsUrl(place);
+      const addressLink = safeMapUrl ? `[${place.address}](${safeMapUrl})` : place.address;
       lines.push(`住所: ${addressLink}`);
       if (place.reviewSummary || place.reviewHighlights) {
           const reviewLineParts = [];
@@ -183,6 +205,36 @@ function formatPlacesStructuredResult(structuredResult) {
   return sections.join("\n\n");
 }
 
+function buildGoogleMapsSearchUrl(name, address) {
+    const query = [name, address].filter(Boolean).join(' ').trim();
+    if (!query) return null;
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}&hl=ja`;
+}
+
+function getSafeGoogleMapsUrl(place) {
+    if (!place) return null;
+    const { mapUrl, name, address } = place;
+    const normalizedSearch = buildGoogleMapsSearchUrl(name, address);
+    if (!mapUrl) {
+        return normalizedSearch;
+    }
+    const lowerUrl = mapUrl.toLowerCase();
+    const isPreferredGoogleMaps = lowerUrl.includes('www.google.com/maps/');
+    const isLegacyMaps = lowerUrl.includes('maps.google.com/?cid') || lowerUrl.includes('maps.google.com/maps');
+    const isShortLink = lowerUrl.includes('maps.app.goo.gl');
+
+    if (isShortLink || isLegacyMaps) {
+        return normalizedSearch || mapUrl;
+    }
+    if (isPreferredGoogleMaps) {
+        return mapUrl;
+    }
+    if (lowerUrl.includes('google.com/maps')) {
+        return mapUrl;
+    }
+    return normalizedSearch || mapUrl;
+}
+
 async function convertMapsAnswerToStructured(rawText) {
   if (!rawText || typeof rawText !== "string") {
       return null;
@@ -191,6 +243,7 @@ async function convertMapsAnswerToStructured(rawText) {
   const schema = getPlacesStructuredOutputSchema();
   const prompt = `以下のGoogle Maps検索結果テキストを、指定のJSONスキーマに厳密に従って構造化してください。`
     + `住所フィールドは必ず完全な日本語表記（例: 〒123-4567 東京都◯◯区◯◯1-2-3 ビル名）に変換し、ローマ字は使わないでください。`
+    + `mapUrl には必ず https://www.google.com/maps/ 形式のURLを用いてください。短縮URL（maps.app.goo.gl 等）しか取得できない場合は、店名と住所で検索クエリを組み立てた https://www.google.com/maps/search/?api=1&query=... 形式を生成してください。`
     + `距離や営業時間が明記されていない場合は空欄や「距離情報なし」ではなく、スキーマの説明に沿った適切な文字列を入力してください。`
     + `\n\n---\n${rawText}\n---\n`;
 
@@ -487,22 +540,7 @@ function addMessageRow(messageData) {
 
 
     // --- Message Copy Button ---
-    const copyMsgBtn = document.createElement('button');
-    copyMsgBtn.classList.add('copy-msg-btn');
-    copyMsgBtn.innerHTML = '<i class="bi bi-clipboard"></i>';
-    copyMsgBtn.title = 'メッセージをコピー';
-    copyMsgBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText(originalTextForCopy)
-            .then(() => {
-                copyMsgBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
-                copyMsgBtn.title = 'コピーしました';
-                setTimeout(() => {
-                    copyMsgBtn.innerHTML = '<i class="bi bi-clipboard"></i>';
-                    copyMsgBtn.title = 'メッセージをコピー';
-                }, 1500);
-            })
-            .catch(err => console.error('コピー失敗:', err));
-    });
+    const copyMsgBtn = createCopyMessageButton(originalTextForCopy);
 
 
     // Append elements to bubble
@@ -684,7 +722,8 @@ async function onSendButton() {
   let locationInfo = null;
   let locationWarningMessage = null;
   const locationKeywordRegex = /(ここ|近く|現在地|周辺|付近)/;
-  if (locationKeywordRegex.test(message)) {
+  const shouldAttemptLocation = locationKeywordRegex.test(message) || message.includes(MANUAL_TAG_FORCE_FOOD);
+  if (shouldAttemptLocation) {
       console.log("Location keyword detected. Attempting to get current position...");
       if (navigator.geolocation) {
           try {
@@ -1316,11 +1355,94 @@ async function callGeminiSummary(prompt, retryCount = 0) {
   return await callGeminiModelSwitcher(prompt, 'gemini-2.5-flash', false, null, null, retryCount);
 }
 
+const MODE_GENERAL = 'general';
+const MODE_MAPS_RESTAURANT = 'mapsFood';
+const MANUAL_TAG_FORCE_FOOD = '#飲食検索';
+const MANUAL_TAG_FORCE_GENERAL = '#通常検索';
+const KEYWORD_CLOUD_BUTTONS = [
+    {
+        label: MANUAL_TAG_FORCE_FOOD,
+        tag: MANUAL_TAG_FORCE_FOOD
+    }
+];
+
+function determineRequestMode(userInput) {
+    if (!userInput || typeof userInput !== 'string') {
+        return MODE_GENERAL;
+    }
+    const normalized = userInput.toLowerCase();
+    if (normalized.includes(MANUAL_TAG_FORCE_FOOD.toLowerCase())) {
+        return MODE_MAPS_RESTAURANT;
+    }
+    if (normalized.includes(MANUAL_TAG_FORCE_GENERAL.toLowerCase())) {
+        return MODE_GENERAL;
+    }
+    return MODE_GENERAL;
+}
+
+function appendHashtagToInput(chatInput, hashtag) {
+    if (!chatInput || !hashtag) return;
+    const trimmedValue = chatInput.value.replace(/\s+$/, '');
+    const tokens = trimmedValue.split(/\s+/).filter(Boolean);
+    const alreadyIncluded = tokens.includes(hashtag);
+    const baseText = alreadyIncluded ? trimmedValue : `${trimmedValue}${trimmedValue ? ' ' : ''}${hashtag}`;
+    chatInput.value = `${baseText} `;
+    chatInput.focus();
+    chatInput.dispatchEvent(new Event('input'));
+}
+
+function setupKeywordCloud(chatInput) {
+    if (!chatInput) return;
+    let container = document.getElementById('keyword-cloud');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'keyword-cloud';
+        const chatContainer = document.querySelector('.chat-container');
+        if (chatContainer) {
+            const chatFooter = document.querySelector('.chat-footer');
+            chatContainer.insertBefore(container, chatFooter || null);
+        }
+    }
+    container.classList.add('keyword-cloud', 'hidden');
+    container.innerHTML = '';
+
+    KEYWORD_CLOUD_BUTTONS.forEach(({ label, tag }) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.classList.add('keyword-chip');
+        button.textContent = label;
+        button.addEventListener('mousedown', (event) => event.preventDefault());
+        button.addEventListener('click', () => appendHashtagToInput(chatInput, tag));
+        container.appendChild(button);
+    });
+
+    const showCloud = () => container.classList.remove('hidden');
+    const hideCloudIfNeeded = () => {
+        if (!chatInput.matches(':focus') && chatInput.value.trim() === '') {
+            container.classList.add('hidden');
+        }
+    };
+
+    chatInput.addEventListener('focus', showCloud);
+    chatInput.addEventListener('input', () => {
+        if (chatInput.value.trim() || document.activeElement === chatInput) {
+            showCloud();
+        } else {
+            container.classList.add('hidden');
+        }
+    });
+    chatInput.addEventListener('blur', () => {
+        setTimeout(hideCloudIfNeeded, 120);
+    });
+}
+
 // ===== メインの Gemini 呼び出し関数 =====
 async function callGemini(userInput, image = null, locationInfo = null) {
   let updateTimeout = null; // ★ try...catchの外で宣言
   let loadingRow = null; // ★ 同じく外で宣言
   let loadingText = null;
+  let loadingProgressContainer = null;
+  let setLoadingProgress = null;
   try {
       // ★ 考え中メッセージ表示の準備
       const chatMessagesDiv = document.getElementById('chatMessages');
@@ -1339,6 +1461,26 @@ async function callGemini(userInput, image = null, locationInfo = null) {
       loadingText = document.createElement('div');
       loadingText.classList.add('bubble-text', 'blinking-text');
       bubble.appendChild(loadingText);
+      loadingProgressContainer = document.createElement('div');
+      loadingProgressContainer.classList.add('loading-progress');
+      const loadingProgressLabel = document.createElement('div');
+      loadingProgressLabel.classList.add('loading-progress-label');
+      const loadingProgressBar = document.createElement('div');
+      loadingProgressBar.classList.add('loading-progress-bar');
+      const loadingProgressFill = document.createElement('div');
+      loadingProgressFill.classList.add('loading-progress-fill');
+      loadingProgressBar.appendChild(loadingProgressFill);
+      loadingProgressContainer.appendChild(loadingProgressLabel);
+      loadingProgressContainer.appendChild(loadingProgressBar);
+      bubble.appendChild(loadingProgressContainer);
+      setLoadingProgress = (percent, message, options = {}) => {
+          const showPercent = options.showPercent !== false;
+          if (!loadingProgressFill || !loadingProgressLabel) return;
+          const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+          loadingProgressFill.style.width = `${clamped}%`;
+          loadingProgressLabel.innerText = showPercent ? `${message} (${clamped}%)` : message;
+      };
+      setLoadingProgress(5, 'ステップ1: リクエスト受付中');
       loadingRow.appendChild(bubble);
 
       updateTimeout = setTimeout(() => { // ★ let/constを削除
@@ -1359,6 +1501,7 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           //  画像あり (2段階処理)
           // ===================================
           console.log(`callGemini with Image (2-step process)`);
+          setLoadingProgress && setLoadingProgress(20, 'ステップ1: 画像データを準備中');
           
           clearTimeout(updateTimeout);
           if (!loadingRow.isConnected) chatMessagesDiv.appendChild(loadingRow);
@@ -1368,6 +1511,7 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           // --- STEP 1: 画像認識 (汎用的なプロンプトに修正) ---
           const recognitionPrompt = "この画像を分析してください。もし画像が看板、メニュー、スライドなど、主にテキストで構成されている場合は、そのテキストをすべて書き出してください。もし画像が物体、ランドマーク、人物などの写真である場合は、その対象を最も的確に表す固有名詞（可能な場合）を含む短いテキストを返してください。書き出したテキスト、または対象の名称のみを返し、それ以外の説明は不要です。";
           console.log(`[Step 1] Identifying subject in image...`);
+          setLoadingProgress && setLoadingProgress(40, 'ステップ2: 画像を解析中');
           
           const recognitionData = await callGeminiModelSwitcher(
               recognitionPrompt,
@@ -1385,9 +1529,11 @@ async function callGemini(userInput, image = null, locationInfo = null) {
 
           // --- STEP 2: 情報検索 ---
           loadingText.innerText = `「${identifiedSubject}」について検索中だゾウ...`;
+          setLoadingProgress && setLoadingProgress(55, 'ステップ2: 検索クエリを生成中');
           
           const finalSearchPrompt = `「${identifiedSubject}」について、次のユーザーの質問に詳しく答えてください: 「${userInput}」`;
           console.log(`[Step 2] Searching for info with prompt: ${finalSearchPrompt}`);
+          setLoadingProgress && setLoadingProgress(70, 'ステップ2: Google検索を実行中');
           
           const searchData = await callGeminiModelSwitcher(
               finalSearchPrompt,
@@ -1401,49 +1547,76 @@ async function callGemini(userInput, image = null, locationInfo = null) {
               throw new Error("情報の検索に失敗しました。");
           }
 
+          setLoadingProgress && setLoadingProgress(85, 'ステップ3: 検索結果を整理中');
           finalAnswer = searchData.answer;
           finalSources = searchData.sources;
 
       } else {
           // ===================================
           //  画像なし (通常の処理)
-          // ===================================
-          console.log(`callGemini without Image (1-step process)`);
+        console.log(`callGemini without Image (1-step process)`);
+        setLoadingProgress && setLoadingProgress(15, 'ステップ1: 会話履歴を整理中');
 
-          let promptToSend = buildPromptFromHistory(false);
-          
-          // ★ 位置情報がある場合はプロンプトに追加
-          if (locationInfo) {
-              const locationLabel = locationInfo.areaLabel || locationInfo.displayName || '';
-              const labelText = locationLabel ? `${locationLabel} 周辺` : '現在地周辺';
-              promptToSend += `\n\n(システム情報: ユーザーの現在地は${labelText}で、緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude} （ブラウザの位置情報）です。この地点から半径1km以内の候補のみをGoogle Maps検索で厳選し、複数（少なくとも3件）見つけてください。同じ建物や系列が複数存在する場合もすべて挙げてください。候補ごとに「おおよその距離（km）」や徒歩/車の所要時間を必ず記載し、取得できない場合は「距離情報なし」と明記してください。もし1km以内に該当する候補が見つからない場合は、その旨を最初に明記し、代替として2km以内の候補を提示してください。2kmでも見つからない場合のみ、理由を明記してリストアップを中止してください。)`;
-          }
+        const requestMode = determineRequestMode(userInput);
+        console.log(`[MODE] requestMode determined as: ${requestMode}`);
+        const promptBase = buildPromptFromHistory(false);
+        const targetModel = 'gemini-2.5-flash';
 
-          // ★ ユーザーの要望に合わせて、店舗情報の詳細出力を促すシステム指示を追加
-          promptToSend += `\n\n(システム指示: ユーザーが店や場所について尋ねている場合は、Google Mapsの情報を優先して検索し、以下のフォーマットを参考に詳細情報をまとめてください。\n\n[店名]\n種類: [種類]\n特徴・雰囲気: [★重要: レビューの件数と評価点（例: 24件のレビューで4.8）に必ず言及してください]。その他、店の特徴や雰囲気。\n住所: [日本語住所](Google Mapsの検索結果URL) ※住所は必ず「〒123-4567 東京都〇〇区〇〇…」のような完全な日本語表記で記述し、Markdownのリンク形式 [住所](URL) にしてください。ローマ字表記は禁止です。\n営業時間: [曜日ごとの営業時間]\n\n※情報は検索結果に基づいて正確に記述してください。)`;
+        if (requestMode === MODE_MAPS_RESTAURANT) {
+            let promptToSend = promptBase;
+            
+            if (locationInfo) {
+                const locationLabel = locationInfo.areaLabel || locationInfo.displayName || '';
+                const labelText = locationLabel ? `${locationLabel} 周辺` : '現在地周辺';
+                promptToSend += `\n\n(システム情報: ユーザーの現在地は${labelText}で、緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude} （ブラウザの位置情報）です。この地点から半径1km以内の候補のみをGoogle Maps検索で厳選し、複数（少なくとも3件）見つけてください。同じ建物や系列が複数存在する場合もすべて挙げてください。候補ごとに「おおよその距離（km）」や徒歩/車の所要時間を必ず記載し、取得できない場合は「距離情報なし」と明記してください。もし1km以内に該当する候補が見つからない場合は、その旨を最初に明記し、代替として2km以内の候補を提示してください。2kmでも見つからない場合のみ、理由を明記してリストアップを中止してください。)`;
+                setLoadingProgress && setLoadingProgress(25, 'ステップ1: 現在地情報を取得中');
+            } else {
+                setLoadingProgress && setLoadingProgress(25, 'ステップ1: 検索条件を構成中');
+            }
 
-          const targetModel = 'gemini-2.5-flash';
-          const data = await callGeminiModelSwitcher(
-              promptToSend,
-              targetModel,
-              true,
-              'googleMaps',
-              null
-          );
-          const rawMapsAnswer = data?.answer || "";
-          const structuredResult = await convertMapsAnswerToStructured(rawMapsAnswer);
-          
-          if (data && data.answer !== undefined) {
-              if (structuredResult) {
-                  const formatted = formatPlacesStructuredResult(structuredResult);
-                  finalAnswer = formatted || rawMapsAnswer;
-              } else {
-                  finalAnswer = rawMapsAnswer;
-              }
-              finalSources = data.sources;
-          } else {
-               throw new Error("APIから有効な応答がありませんでした。");
-          }
+            promptToSend += `\n\n(システム指示: ユーザーが店や場所について尋ねている場合は、Google Mapsの情報を優先して検索し、以下のフォーマットを参考に詳細情報をまとめてください。\n\n[店名]\n種類: [種類]\n特徴・雰囲気: [★重要: レビューの件数と評価点（例: 24件のレビューで4.8）に必ず言及してください]。その他、店の特徴や雰囲気。\n住所: [日本語住所](Google Mapsの検索結果URL) ※住所は必ず「〒123-4567 東京都〇〇区〇〇…」のような完全な日本語表記で記述し、Markdownのリンク形式 [住所](URL) にしてください。ローマ字表記は禁止です。\n営業時間: [曜日ごとの営業時間]\n\n※情報は検索結果に基づいて正確に記述してください。)`;
+            setLoadingProgress && setLoadingProgress(40, 'ステップ2: Google Mapsで検索中');
+            const data = await callGeminiModelSwitcher(
+                promptToSend,
+                targetModel,
+                true,
+                'googleMaps',
+                null
+            );
+            setLoadingProgress && setLoadingProgress(60, 'ステップ2: 検索結果を解析中');
+            const rawMapsAnswer = data?.answer || "";
+            setLoadingProgress && setLoadingProgress(72, 'ステップ3: データを整理中');
+            const structuredResult = await convertMapsAnswerToStructured(rawMapsAnswer);
+            
+            if (data && data.answer !== undefined) {
+                if (structuredResult) {
+                    setLoadingProgress && setLoadingProgress(82, 'ステップ3: 表示形式に整形中');
+                    const formatted = formatPlacesStructuredResult(structuredResult);
+                    finalAnswer = formatted || rawMapsAnswer;
+                } else {
+                    finalAnswer = rawMapsAnswer;
+                }
+                finalSources = data.sources;
+            } else {
+                 throw new Error("APIから有効な応答がありませんでした。");
+            }
+        } else {
+            setLoadingProgress && setLoadingProgress(35, 'ステップ2: Google検索を実行中');
+            const generalData = await callGeminiModelSwitcher(
+                promptBase,
+                targetModel,
+                true,
+                'googleSearch',
+                null
+            );
+            setLoadingProgress && setLoadingProgress(65, 'ステップ3: 検索結果を要約中');
+            if (generalData && generalData.answer !== undefined) {
+                finalAnswer = generalData.answer;
+                finalSources = generalData.sources;
+            } else {
+                throw new Error("一般質問の処理中に有効な応答が得られませんでした。");
+            }
+        }
       }
 
       // ===================================
@@ -1465,6 +1638,7 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           const refinementModel = 'gemini-2.5-flash'; // ユーザー指示モデルに統一
           console.log(`Calling Model Switcher (Refinement) with model: ${refinementModel}, grounding: false`);
           try {
+              setLoadingProgress && setLoadingProgress(88, 'ステップ3: 仕上げ処理中');
               const refinementData = await callGeminiModelSwitcher(refinementPrompt, refinementModel, false, null, null);
               if (refinementData && refinementData.answer) {
                   finalAnswer = refinementData.answer;
@@ -1502,9 +1676,17 @@ async function callGemini(userInput, image = null, locationInfo = null) {
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = processMarkdownSegment(finalAnswer);
       loadingText.innerHTML = tempDiv.innerHTML;
+      if (loadingProgressContainer) {
+          loadingProgressContainer.classList.add('loading-progress-complete');
+          setLoadingProgress && setLoadingProgress(100, '完了', { showPercent: false });
+      }
 
       const existingBubble = loadingRow.querySelector('.bubble');
       if (existingBubble) {
+          const existingCopyBtn = existingBubble.querySelector('.copy-msg-btn');
+          if (existingCopyBtn) existingCopyBtn.remove();
+          const aiCopyBtn = createCopyMessageButton(finalAnswer);
+          existingBubble.appendChild(aiCopyBtn);
           const existingTime = existingBubble.querySelector('.bubble-time');
           if (existingTime) existingTime.remove();
 
@@ -1558,6 +1740,10 @@ async function callGemini(userInput, image = null, locationInfo = null) {
            if(loadingText) {
               loadingText.classList.remove('blinking-text');
               loadingText.innerText = errorBubbleText;
+           }
+           if (loadingProgressContainer) {
+               loadingProgressContainer.classList.add('loading-progress-error');
+               setLoadingProgress && setLoadingProgress(100, 'エラー');
            }
       } else {
           addMessageRow({
@@ -2059,13 +2245,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // const weatherBtn = document.getElementById('weather-btn'); // ★ 天気ボタン取得をコメントアウト ★
 
     if (sendButton) sendButton.addEventListener('click', onSendButton);
-    if (chatInput) chatInput.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            onSendButton();
-        }
-    });
-    if (chatInput) chatInput.addEventListener('input', () => adjustTextareaHeight(chatInput));
+    if (chatInput) {
+        chatInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                onSendButton();
+            }
+        });
+        chatInput.addEventListener('input', () => adjustTextareaHeight(chatInput));
+        setupKeywordCloud(chatInput);
+    }
     if (hamburger) hamburger.addEventListener('click', toggleSideMenu);
     if (closeMenu) closeMenu.addEventListener('click', toggleSideMenu);
     if (newChat) newChat.addEventListener('click', startNewChat);

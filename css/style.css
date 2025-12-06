@@ -453,14 +453,15 @@ body {
 .message-row.other .bubble::before {
   content: "";
   position: absolute;
-  top: -2px;
-  left: -12px;
-  width: 24px;
-  height: 24px;
-  background: var(--other-bubble-bg-color);
-  border-left: 1px solid #e8e8e8;
-  border-bottom: 1px solid #e8e8e8;
-  border-bottom-left-radius: 14px;
+  top: -5px;
+  left: -10px;
+  width: 20px;
+  height: 30px;
+  border-radius: 0 0 0 15px;
+  /* ★ 1. 背景色(Fill) -> 2. 境界線色(Border) の順で指定 */
+  /* 境界線シャドウの広がりを -6px に戻す */
+  box-shadow: -3px -15px 0 -7px var(--other-bubble-bg-color) inset, /* Fill (BG Color) - Smaller */
+              -2px -14px 0 -6px #e8e8e8 inset; /* Border (Gray) - Original */
 }
 
 .message-row.self .bubble::before {

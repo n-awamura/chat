@@ -721,8 +721,8 @@ async function onSendButton() {
   // ★ 現在地情報の取得ロジックを追加
   let locationInfo = null;
   let locationWarningMessage = null;
-  const locationKeywordRegex = /(ここ|近く|現在地|周辺|付近)/;
-  const shouldAttemptLocation = locationKeywordRegex.test(message) || message.includes(MANUAL_TAG_FORCE_FOOD);
+  const nearKeywordRegex = /(ここ|近く|近所|近辺|周辺|付近|この辺|このへん|近い|近場|around|near)/i;
+  const shouldAttemptLocation = nearKeywordRegex.test(message);
   if (shouldAttemptLocation) {
       console.log("Location keyword detected. Attempting to get current position...");
       if (navigator.geolocation) {
@@ -1571,6 +1571,7 @@ async function callGemini(userInput, image = null, locationInfo = null) {
                 promptToSend += `\n\n(システム情報: ユーザーの現在地は${labelText}で、緯度:${locationInfo.latitude}, 経度:${locationInfo.longitude} （ブラウザの位置情報）です。この地点から半径1km以内の候補のみをGoogle Maps検索で厳選し、複数（少なくとも3件）見つけてください。同じ建物や系列が複数存在する場合もすべて挙げてください。候補ごとに「おおよその距離（km）」や徒歩/車の所要時間を必ず記載し、取得できない場合は「距離情報なし」と明記してください。もし1km以内に該当する候補が見つからない場合は、その旨を最初に明記し、代替として2km以内の候補を提示してください。2kmでも見つからない場合のみ、理由を明記してリストアップを中止してください。)`;
                 setLoadingProgress && setLoadingProgress(25, 'ステップ1: 現在地情報を取得中');
             } else {
+                promptToSend += `\n\n(システム情報: ユーザーは入力に含まれる地名・駅名を起点に飲食店を探しています。現在地ではなく、入力テキストに含まれるエリアの中心付近で検索してください。場所が曖昧な場合は、ユーザー入力中の地名に最も関連する地点を推定して検索してください。)`;
                 setLoadingProgress && setLoadingProgress(25, 'ステップ1: 検索条件を構成中');
             }
 

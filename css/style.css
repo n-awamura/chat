@@ -548,7 +548,7 @@ body {
 /* ===== 発言内容の区切り（日付表示） ===== */
 .date-header {
   display: table;           /* インラインブロックではなく、内容に合わせたテーブル表示 */
-  margin: 10px auto;        /* 自動左右マージンで中央配置 */
+  margin: 6px auto;         /* 縦余白を詰めつつ中央配置 */
   text-align: center;
   font-size: 0.7rem;
   font-family: var(--font-family-noto-sans-jp);

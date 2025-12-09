@@ -268,7 +268,7 @@ body {
 .chat-messages {
   flex-grow: 1;
   overflow-y: auto;
-  padding: 20px 20px 16px; /* 下側に専用余白を追加して入力欄と分離 */
+  padding: 16px 20px 16px; /* 上下16pxで均一に */
   display: flex;
   flex-direction: column;
   gap: 15px; /* メッセージ間のスペース */
@@ -548,7 +548,7 @@ body {
 /* ===== 発言内容の区切り（日付表示） ===== */
 .date-header {
   display: table;           /* インラインブロックではなく、内容に合わせたテーブル表示 */
-  margin: 6px auto;         /* 縦余白を詰めつつ中央配置 */
+  margin: 0 auto;           /* 縦の余白をゼロにして詰める */
   text-align: center;
   font-size: 0.7rem;
   font-family: var(--font-family-noto-sans-jp);

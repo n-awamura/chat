@@ -268,7 +268,7 @@ body {
 .chat-messages {
   flex-grow: 1;
   overflow-y: auto;
-  padding: 20px 20px 0;
+  padding: 20px 20px 16px; /* 下側に専用余白を追加して入力欄と分離 */
   display: flex;
   flex-direction: column;
   gap: 15px; /* メッセージ間のスペース */
@@ -407,7 +407,7 @@ body {
 .message-row {
   display: flex;
   align-items: flex-end;
-  margin-bottom: 20px;
+  margin-bottom: 0; /* 吹き出し同士は詰める。リスト全体の下パディングで調整 */
   position: relative;
 }
 .message-row.other .icon {
@@ -429,7 +429,7 @@ body {
 /* ===== 吹き出し本体 ===== */
 .bubble {
   max-width: 60%;
-  padding: 12px 12px 28px 12px; /* 下余白を少し詰めてボタンとの間隔を調整 */
+  padding: 12px 12px 24px 12px; /* 下余白を戻してボタンとの間隔を確保 */
   position: relative;
   border-radius: 10px;
   background-color: var(--other-bubble-bg-color); /* Default for other */

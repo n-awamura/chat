@@ -429,7 +429,7 @@ body {
 /* ===== 吹き出し本体 ===== */
 .bubble {
   max-width: 60%;
-  padding: 12px;
+  padding: 12px 12px 28px 12px; /* 下余白を少し詰めてボタンとの間隔を調整 */
   position: relative;
   border-radius: 10px;
   background-color: var(--other-bubble-bg-color); /* Default for other */
@@ -589,12 +589,9 @@ body {
   cursor: pointer;
   padding: 2px; /* 少しパディングを追加 */
   font-size: 0.9em;
-  opacity: 0; /* ★ 通常は非表示 */
+  opacity: 0.7; /* 常時表示しつつ少し薄く */
   transition: opacity 0.2s ease;
   z-index: 1; /* テキストより手前に */
-}
-.bubble:hover .copy-msg-btn {
-  opacity: 0.6; /* ★ 吹き出しホバーで表示 */
 }
 .copy-msg-btn:hover {
   opacity: 1;
@@ -602,6 +599,14 @@ body {
 .copy-msg-btn i {
   pointer-events: none;
   vertical-align: middle; /* アイコンの垂直位置調整 */
+}
+.share-msg-btn {
+  right: 36px; /* コピーの左に並べて重なり回避 */
+  margin-top: 6px; /* テキストとの間に余白を追加 */
+}
+.speak-msg-btn {
+  right: 64px; /* 共有よりさらに左に配置 */
+  margin-top: 6px;
 }
 
 /* 1行のみの場合にコピーボタンがテキストと重なるのを防ぐ */

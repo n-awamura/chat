@@ -542,11 +542,15 @@ function addMessageRow(messageData) {
 
     // --- Message Copy Button ---
     const copyMsgBtn = createCopyMessageButton(originalTextForCopy);
+    const shareMsgBtn = createShareMessageButton(originalTextForCopy);
+    const speakMsgBtn = createSpeakMessageButton(originalTextForCopy);
 
 
     // Append elements to bubble
     bubble.appendChild(bubbleText);
     bubble.appendChild(copyMsgBtn); // Copy button inside bubble
+    bubble.appendChild(shareMsgBtn); // Share button inside bubble
+    bubble.appendChild(speakMsgBtn); // TTS button inside bubble
     bubble.appendChild(bubbleTime); // Timestamp inside bubble
     console.log("Appended text, copy button, and timestamp to bubble.");
 
@@ -626,37 +630,53 @@ async function getWeatherInfoForCity(city) {
 }
 */
 
-async function endCurrentSession() {
+async function endCurrentSession(options = { runInBackground: false }) {
   if (!currentSession) return;
   if (currentSession.sessionState === "finished") return;
 
-  if (currentSession.messages && currentSession.messages.length > 0) {
-    const newTitle = await summarizeSessionAsync(currentSession);
-    if (typeof newTitle === "string" && newTitle.trim() !== "") { // 空文字列でないことを確認
-      currentSession.title = newTitle;
+  const { runInBackground } = options;
+  const sessionCopy = {
+    ...currentSession,
+    messages: currentSession.messages ? [...currentSession.messages] : []
+  };
+
+  const finalizeSession = async (targetSession) => {
+    if (targetSession.messages && targetSession.messages.length > 0) {
+      const newTitle = await summarizeSessionAsync(targetSession);
+      if (typeof newTitle === "string" && newTitle.trim() !== "") { // 空文字列でないことを確認
+        targetSession.title = newTitle;
+      } else {
+        targetSession.title = targetSession.title || "無題";
+      }
     } else {
-      currentSession.title = currentSession.title || "無題";
+      console.log("メッセージが空のため、要約は実施しません。");
+      targetSession.title = "無題";
     }
-  } else {
-    console.log("メッセージが空のため、要約は実施しません。");
-    currentSession.title = "無題";
+
+    targetSession.sessionState = "finished";
+    targetSession.updatedAt = new Date(); // ★ Date オブジェクトで設定 ★
+
+    const sessionIndex = conversationSessions.findIndex(s => s.id === targetSession.id);
+    if (sessionIndex > -1) {
+      conversationSessions[sessionIndex].title = targetSession.title;
+      conversationSessions[sessionIndex].updatedAt = targetSession.updatedAt; // Date オブジェクトをコピー
+      conversationSessions[sessionIndex].sessionState = targetSession.sessionState;
+      console.log(`Updated session ${targetSession.id} in local conversationSessions after endCurrentSession.`);
+      updateSideMenu();
+    } else {
+      console.warn(`Session ${targetSession.id} not found in conversationSessions during endCurrentSession. This should not happen if createNewSession worked correctly.`);
+    }
+
+    await backupToFirebase(targetSession); // updatedAt は backupToFirebase 内で Timestamp に変換される
+  };
+
+  if (runInBackground) {
+    finalizeSession(sessionCopy).catch(err => console.error("Background endCurrentSession failed:", err));
+    // すぐに次の処理へ進む
+    return;
   }
 
-  currentSession.sessionState = "finished";
-  currentSession.updatedAt = new Date(); // ★ Date オブジェクトで設定 ★
-
-  const sessionIndex = conversationSessions.findIndex(s => s.id === currentSession.id);
-  if (sessionIndex > -1) {
-    conversationSessions[sessionIndex].title = currentSession.title;
-    conversationSessions[sessionIndex].updatedAt = currentSession.updatedAt; // Date オブジェクトをコピー
-    conversationSessions[sessionIndex].sessionState = currentSession.sessionState;
-    console.log(`Updated session ${currentSession.id} in local conversationSessions after endCurrentSession.`);
-  } else {
-    console.warn(`Session ${currentSession.id} not found in conversationSessions during endCurrentSession. This should not happen if createNewSession worked correctly.`);
-  }
-
-  await backupToFirebase(); // updatedAt は backupToFirebase 内で Timestamp に変換される
-  updateSideMenu();
+  await finalizeSession(sessionCopy);
 }
 
 async function onSendButton() {
@@ -1133,30 +1153,38 @@ async function startNewChat() {
     return;
   }
   isCreatingNewSession = true;
-  showThinkingIndicator(true);
 
   try {
     if (currentSession && currentSession.sessionState === "active") {
-      await endCurrentSession();
+      await endCurrentSession({ runInBackground: true });
     }
-    
-    await createNewSession(); // currentSession と conversationSessions がここで更新される想定
+
+    await createNewSession({ saveInBackground: true }); // currentSession と conversationSessions がここで更新される想定
 
     console.log("New session created. Updating side menu immediately.");
     updateSideMenu(); 
     
-    console.log("Performing initial load for side menu from Firebase.");
-    await updateSideMenuFromFirebase(false); 
+    console.log("Performing initial load for side menu from Firebase (background).");
+    (async () => {
+      showThinkingIndicator(true);
+      try {
+        await updateSideMenuFromFirebase(false); 
+      } catch (e) {
+        console.error("Background side menu refresh failed:", e);
+      } finally {
+        showThinkingIndicator(false);
+      }
+    })();
 
   } catch (error) {
     console.error("Error starting new chat:", error);
   } finally {
-    showThinkingIndicator(false);
     isCreatingNewSession = false;
   }
 }
 
-async function createNewSession() {
+async function createNewSession(options = { saveInBackground: false }) {
+    const { saveInBackground } = options;
     const currentUser = firebase.auth().currentUser;
     if (!currentUser) {
         console.error("ユーザーがログインしていません。セッションを作成できません。");
@@ -1225,8 +1253,19 @@ async function createNewSession() {
     lastHeaderDate = null;
     scrollToBottom();
 
+    const savePromise = db.collection("chatSessions").doc(sessionId).set(sessionDataToSave);
+
+    if (saveInBackground) {
+        savePromise
+          .then(() => console.log("新規セッションをFirestoreに作成 (/chatSessions):", sessionId))
+          .catch(error => {
+            console.error("新規セッションのFirestore書き込みエラー (bg):", error);
+          });
+        return;
+    }
+
     try {
-        await db.collection("chatSessions").doc(sessionId).set(sessionDataToSave);
+        await savePromise;
         console.log("新規セッションをFirestoreに作成 (/chatSessions):", sessionId);
     } catch (error) {
         console.error("新規セッションのFirestore書き込みエラー:", error);
@@ -1448,6 +1487,114 @@ function setupKeywordCloud(chatInput) {
     chatInput.addEventListener('blur', () => {
         setTimeout(hideCloudIfNeeded, 120);
     });
+}
+
+// ===== LINE共有機能 (navigator.share + フォールバック) =====
+function getLatestShareText() {
+    if (!currentSession || !Array.isArray(currentSession.messages) || currentSession.messages.length === 0) return null;
+    const reversed = [...currentSession.messages].reverse();
+    const aiMessage = reversed.find((m) => m && typeof m.text === 'string' && m.sender === 'Gemini');
+    const anyMessage = reversed.find((m) => m && typeof m.text === 'string');
+    const target = aiMessage || anyMessage;
+    if (!target) return null;
+    const trimmed = target.text.trim();
+    if (!trimmed) return null;
+    const MAX_SHARE_LENGTH = 3800; // navigator.share 用にやや短めに抑制
+    return trimmed.length > MAX_SHARE_LENGTH ? `${trimmed.slice(0, MAX_SHARE_LENGTH)}…` : trimmed;
+}
+
+function openLineShareLink(text) {
+    if (!text) return;
+    const shareUrl = `https://line.me/R/share?text=${encodeURIComponent(text)}`;
+    window.open(shareUrl, '_blank', 'noreferrer');
+}
+
+async function shareTextToLine(text) {
+    if (!text) return;
+    if (navigator.share && typeof navigator.share === 'function') {
+        try {
+            await navigator.share({ text });
+            return;
+        } catch (error) {
+            console.warn("navigator.share failed, falling back to LINE share link:", error);
+        }
+    }
+    openLineShareLink(text);
+}
+
+async function shareLatestMessageToLine() {
+    const shareText = getLatestShareText();
+    if (!shareText) {
+        alert("共有できるメッセージがありません。");
+        return;
+    }
+    shareTextToLine(shareText);
+}
+
+function setupLineShareButton() {
+    const sendButton = document.getElementById('sendBtn');
+    let shareBtn = document.getElementById('lineShareBtn');
+    if (!shareBtn && sendButton && sendButton.parentNode) {
+        shareBtn = document.createElement('button');
+        shareBtn.id = 'lineShareBtn';
+        shareBtn.type = 'button';
+        shareBtn.classList.add('icon-btn', 'line-share-btn');
+        shareBtn.title = 'LINEで共有';
+        shareBtn.innerHTML = '<i class="bi bi-share-fill"></i>';
+        sendButton.parentNode.insertBefore(shareBtn, sendButton.nextSibling);
+    }
+    if (shareBtn) {
+        shareBtn.addEventListener('click', shareLatestMessageToLine);
+    }
+}
+
+function createShareMessageButton(textToShare) {
+    const shareBtn = document.createElement('button');
+    // コピーアイコンと同じトンマナを使うため、同じクラスを付与
+    shareBtn.classList.add('copy-msg-btn', 'share-msg-btn');
+    shareBtn.innerHTML = '<i class="bi bi-share-fill"></i>';
+    shareBtn.title = 'LINEで共有';
+    // アイコンが重ならないように余白を確保
+    shareBtn.style.marginLeft = '6px';
+    shareBtn.addEventListener('click', () => {
+        if (!textToShare) return;
+        const trimmed = textToShare.trim();
+        if (!trimmed) return;
+        shareTextToLine(trimmed);
+    });
+    return shareBtn;
+}
+
+// ===== 音声読み上げ (Speech Synthesis) =====
+function speakText(text) {
+    if (!text || !text.trim()) return;
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+        alert("このブラウザでは音声読み上げに対応していません。");
+        return;
+    }
+    try {
+        window.speechSynthesis.cancel(); // 既存の読み上げを停止
+        const utterance = new SpeechSynthesisUtterance(text.trim());
+        utterance.lang = 'ja-JP';
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+        window.speechSynthesis.speak(utterance);
+    } catch (error) {
+        console.error("speechSynthesis error:", error);
+        alert("読み上げに失敗しました。");
+    }
+}
+
+function createSpeakMessageButton(textToSpeak) {
+    const speakBtn = document.createElement('button');
+    speakBtn.classList.add('copy-msg-btn', 'speak-msg-btn');
+    speakBtn.innerHTML = '<i class="bi bi-volume-up-fill"></i>';
+    speakBtn.title = '読み上げ';
+    speakBtn.addEventListener('click', () => {
+        if (!textToSpeak) return;
+        speakText(textToSpeak);
+    });
+    return speakBtn;
 }
 
 // ===== メインの Gemini 呼び出し関数 =====
@@ -1702,8 +1849,16 @@ async function callGemini(userInput, image = null, locationInfo = null) {
       if (existingBubble) {
           const existingCopyBtn = existingBubble.querySelector('.copy-msg-btn');
           if (existingCopyBtn) existingCopyBtn.remove();
+          const existingShareBtn = existingBubble.querySelector('.share-msg-btn');
+          if (existingShareBtn) existingShareBtn.remove();
+          const existingSpeakBtn = existingBubble.querySelector('.speak-msg-btn');
+          if (existingSpeakBtn) existingSpeakBtn.remove();
           const aiCopyBtn = createCopyMessageButton(finalAnswer);
+          const aiShareBtn = createShareMessageButton(finalAnswer);
+          const aiSpeakBtn = createSpeakMessageButton(finalAnswer);
           existingBubble.appendChild(aiCopyBtn);
+          existingBubble.appendChild(aiShareBtn);
+          existingBubble.appendChild(aiSpeakBtn);
           const existingTime = existingBubble.querySelector('.bubble-time');
           if (existingTime) existingTime.remove();
 
@@ -1831,39 +1986,39 @@ async function updateUntitledSessions() {
   }
 }
 
-async function backupToFirebase() {
+async function backupToFirebase(targetSession = currentSession) {
   console.log("backupToFirebase called");
   const currentUser = firebase.auth().currentUser;
   if (!currentUser) {
     console.error("ユーザーがログインしていません。バックアップできません。");
     return;
   }
-  if (!currentSession || !currentSession.id) { 
-    console.warn("バックアップするカレントセッションが存在しないか、IDがありません。");
+  if (!targetSession || !targetSession.id) { 
+    console.warn("バックアップするセッションが存在しないか、IDがありません。");
     return;
   }
 
   try {
     const sessionDataToSave = { 
-        ...currentSession,
+        ...targetSession,
         userId: currentUser.uid 
     };
 
     // updatedAt を Firestore Timestamp に変換
-    console.log("[backupToFirebase] Converting updatedAt. Original value:", currentSession.updatedAt, "Type:", typeof currentSession.updatedAt);
-    if (currentSession.updatedAt instanceof Date && !isNaN(currentSession.updatedAt.getTime())) {
-        sessionDataToSave.updatedAt = firebase.firestore.Timestamp.fromDate(currentSession.updatedAt);
-    } else if (currentSession.updatedAt) { 
+    console.log("[backupToFirebase] Converting updatedAt. Original value:", targetSession.updatedAt, "Type:", typeof targetSession.updatedAt);
+    if (targetSession.updatedAt instanceof Date && !isNaN(targetSession.updatedAt.getTime())) {
+        sessionDataToSave.updatedAt = firebase.firestore.Timestamp.fromDate(targetSession.updatedAt);
+    } else if (targetSession.updatedAt) { 
         try {
-            const dateObj = new Date(currentSession.updatedAt);
+            const dateObj = new Date(targetSession.updatedAt);
             if (!isNaN(dateObj.getTime())) {
                 sessionDataToSave.updatedAt = firebase.firestore.Timestamp.fromDate(dateObj);
             } else {
-                console.warn("Invalid date value for updatedAt (conversion failed):", currentSession.updatedAt, "Using current time instead.");
+                console.warn("Invalid date value for updatedAt (conversion failed):", targetSession.updatedAt, "Using current time instead.");
                 sessionDataToSave.updatedAt = firebase.firestore.Timestamp.now();
             }
         } catch (e) {
-            console.warn("Error converting updatedAt to Date:", currentSession.updatedAt, e, "Using current time instead.");
+            console.warn("Error converting updatedAt to Date:", targetSession.updatedAt, e, "Using current time instead.");
             sessionDataToSave.updatedAt = firebase.firestore.Timestamp.now();
         }
     } else {
@@ -1872,20 +2027,20 @@ async function backupToFirebase() {
     }
 
     // createdAt を Firestore Timestamp に変換
-    console.log("[backupToFirebase] Converting createdAt. Original value:", currentSession.createdAt, "Type:", typeof currentSession.createdAt);
-    if (currentSession.createdAt instanceof Date && !isNaN(currentSession.createdAt.getTime())) {
-        sessionDataToSave.createdAt = firebase.firestore.Timestamp.fromDate(currentSession.createdAt);
-    } else if (currentSession.createdAt) {
+    console.log("[backupToFirebase] Converting createdAt. Original value:", targetSession.createdAt, "Type:", typeof targetSession.createdAt);
+    if (targetSession.createdAt instanceof Date && !isNaN(targetSession.createdAt.getTime())) {
+        sessionDataToSave.createdAt = firebase.firestore.Timestamp.fromDate(targetSession.createdAt);
+    } else if (targetSession.createdAt) {
         try {
-            const dateObj = new Date(currentSession.createdAt);
+            const dateObj = new Date(targetSession.createdAt);
             if (!isNaN(dateObj.getTime())) {
                 sessionDataToSave.createdAt = firebase.firestore.Timestamp.fromDate(dateObj);
             } else {
-                console.warn("Invalid date value for createdAt (conversion failed):", currentSession.createdAt, "Using current time instead.");
+                console.warn("Invalid date value for createdAt (conversion failed):", targetSession.createdAt, "Using current time instead.");
                 sessionDataToSave.createdAt = firebase.firestore.Timestamp.now();
             }
         } catch (e) {
-            console.warn("Error converting createdAt to Date:", currentSession.createdAt, e, "Using current time instead.");
+            console.warn("Error converting createdAt to Date:", targetSession.createdAt, e, "Using current time instead.");
             sessionDataToSave.createdAt = firebase.firestore.Timestamp.now(); 
         }
     } else {
@@ -1951,7 +2106,7 @@ async function backupToFirebase() {
     }
 
   } catch (error) {
-    console.error(`バックアップエラー (Session ID: ${currentSession?.id}):`, error);
+    console.error(`バックアップエラー (Session ID: ${targetSession?.id}):`, error);
     if (error.code) console.error(`Firestore Error Code: ${error.code}`);
     if (error.message) console.error(`Firestore Error Message: ${error.message}`);
   }
@@ -2262,6 +2417,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // const weatherBtn = document.getElementById('weather-btn'); // ★ 天気ボタン取得をコメントアウト ★
 
     if (sendButton) sendButton.addEventListener('click', onSendButton);
+    setupLineShareButton();
     if (chatInput) {
         chatInput.addEventListener('keypress', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {

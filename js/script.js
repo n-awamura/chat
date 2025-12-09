@@ -2417,7 +2417,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // const weatherBtn = document.getElementById('weather-btn'); // ★ 天気ボタン取得をコメントアウト ★
 
     if (sendButton) sendButton.addEventListener('click', onSendButton);
-    setupLineShareButton();
     if (chatInput) {
         chatInput.addEventListener('keypress', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {

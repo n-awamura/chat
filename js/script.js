@@ -611,6 +611,29 @@ function buildPromptFromHistory(includeSender = true) {
     .join("\n");
 }
 
+// 今日の日付とタイムゾーンを明示するシステム文を生成
+function buildTodayDateInstruction() {
+  const now = new Date();
+  const isoDate = now.toISOString().split('T')[0];
+  const offsetMinutes = -now.getTimezoneOffset(); // 分単位、東側が正
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absMinutes = Math.abs(offsetMinutes);
+  const hours = String(Math.floor(absMinutes / 60)).padStart(2, "0");
+  const minutes = String(absMinutes % 60).padStart(2, "0");
+  const offsetText = `UTC${sign}${hours}:${minutes}`;
+  const localLabel = now.toLocaleString("ja-JP", { timeZoneName: "short" });
+  return `(システム情報: 今日の日付は ${isoDate} で、現在のローカル時刻は ${localLabel} (${offsetText}) です。日付や「今年」「今月」「今日」などの語は必ずこの日付を基準に解釈してください。)`;
+}
+
+// プロンプトの先頭にシステム文を差し込む共通ヘルパー
+function prependSystemInstruction(promptText, systemInstruction) {
+  const systemPart = systemInstruction ? systemInstruction.trim() : "";
+  const base = promptText ? promptText.trim() : "";
+  if (!systemPart) return base;
+  if (!base) return systemPart;
+  return `${systemPart}\n\n${base}`;
+}
+
 /* 
 // 天気のAPI関連のコードは、グラウンディングで代替できるためコメントアウト
 async function getWeatherInfoForCity(city) {
@@ -1285,7 +1308,7 @@ async function createNewSession(options = { saveInBackground: false }) {
 
 // Gemini Model Switcher Workerを呼び出す関数 (デフォルトモデル名を 1.5-pro に変更)
 // ★ tools 引数を追加
-async function callGeminiModelSwitcher(prompt, modelName = 'gemini-1.5-pro', useGrounding = false, toolName = null, image = null, retryCount = 0, tools = null, generationConfig = null) {
+async function callGeminiModelSwitcher(prompt, modelName = 'gemini-2.5-flash', useGrounding = false, toolName = null, image = null, retryCount = 0, tools = null, generationConfig = null) {
     const workerUrl = "https://gemini-model-switcher.fudaoxiang-gym.workers.dev"; 
     const maxRetries = 2;
 
@@ -1604,6 +1627,7 @@ async function callGemini(userInput, image = null, locationInfo = null) {
   let loadingText = null;
   let loadingProgressContainer = null;
   let setLoadingProgress = null;
+  const todayInstruction = buildTodayDateInstruction();
   try {
       // ★ 考え中メッセージ表示の準備
       const chatMessagesDiv = document.getElementById('chatMessages');
@@ -1692,7 +1716,7 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           loadingText.innerText = `「${identifiedSubject}」について検索中だゾウ...`;
           setLoadingProgress && setLoadingProgress(55, 'ステップ2: 検索クエリを生成中');
           
-          const finalSearchPrompt = `「${identifiedSubject}」について、次のユーザーの質問に詳しく答えてください: 「${userInput}」`;
+          const finalSearchPrompt = `${todayInstruction}\n\n「${identifiedSubject}」について、次のユーザーの質問に詳しく答えてください: 「${userInput}」`;
           console.log(`[Step 2] Searching for info with prompt: ${finalSearchPrompt}`);
           setLoadingProgress && setLoadingProgress(70, 'ステップ2: Google検索を実行中');
           
@@ -1720,7 +1744,8 @@ async function callGemini(userInput, image = null, locationInfo = null) {
 
         const requestMode = determineRequestMode(userInput);
         console.log(`[MODE] requestMode determined as: ${requestMode}`);
-        const promptBase = buildPromptFromHistory(false);
+        let promptBase = buildPromptFromHistory(false);
+        promptBase = prependSystemInstruction(promptBase, todayInstruction);
         const targetModel = 'gemini-2.5-flash';
 
         if (requestMode === MODE_MAPS_RESTAURANT) {

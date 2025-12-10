@@ -1668,11 +1668,16 @@ async function callGemini(userInput, image = null, locationInfo = null) {
       setLoadingProgress(5, 'ステップ1: リクエスト受付中');
       loadingRow.appendChild(bubble);
 
+      const appendLoadingRowIfNeeded = () => {
+          if (loadingRow && !loadingRow.isConnected) {
+              chatMessagesDiv.appendChild(loadingRow);
+          }
+      };
+
       updateTimeout = setTimeout(() => { // ★ let/constを削除
           if (loadingRow && !loadingRow.isConnected) { // loadingRowの存在チェックを追加
               loadingText.innerText = "考え中だゾウ...";
-              chatMessagesDiv.appendChild(loadingRow);
-              scrollToBottom();
+              appendLoadingRowIfNeeded();
               console.log("Displayed '考え中だゾウ...' message.");
           }
       }, delayTime);
@@ -1689,9 +1694,8 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           setLoadingProgress && setLoadingProgress(20, 'ステップ1: 画像データを準備中');
           
           clearTimeout(updateTimeout);
-          if (!loadingRow.isConnected) chatMessagesDiv.appendChild(loadingRow);
-          loadingText.innerText = "画像を分析中だゾウ...";
-          scrollToBottom();
+          appendLoadingRowIfNeeded();
+          loadingText.innerText = "考え中だゾウ...";
 
           // --- STEP 1: 画像認識 (汎用的なプロンプトに修正) ---
           const recognitionPrompt = "この画像を分析してください。もし画像が看板、メニュー、スライドなど、主にテキストで構成されている場合は、そのテキストをすべて書き出してください。もし画像が物体、ランドマーク、人物などの写真である場合は、その対象を最も的確に表す固有名詞（可能な場合）を含む短いテキストを返してください。書き出したテキスト、または対象の名称のみを返し、それ以外の説明は不要です。";

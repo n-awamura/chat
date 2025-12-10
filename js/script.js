@@ -1897,8 +1897,6 @@ async function callGemini(userInput, image = null, locationInfo = null) {
           Prism.highlightAllUnder(existingBubble);
       }
 
-      scrollToBottom();
-
       // ★★★ セッションタイトル要約とバックアップ ★★★
       if (currentSession && currentSession.title === "無題") {
           console.log("Current session is untitled, attempting to summarize...");

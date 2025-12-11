@@ -1589,19 +1589,33 @@ function createShareMessageButton(textToShare) {
 }
 
 // ===== 音声読み上げ (Speech Synthesis) =====
+let currentUtterance = null;
+
 function speakText(text) {
     if (!text || !text.trim()) return;
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
         alert("このブラウザでは音声読み上げに対応していません。");
         return;
     }
+
+    const synth = window.speechSynthesis;
+
+    // すでに再生中なら、トグル動作で停止する
+    if (synth.speaking || synth.paused) {
+        synth.cancel();
+        currentUtterance = null;
+        return;
+    }
+
     try {
-        window.speechSynthesis.cancel(); // 既存の読み上げを停止
-        const utterance = new SpeechSynthesisUtterance(text.trim());
-        utterance.lang = 'ja-JP';
-        utterance.rate = 1.0;
-        utterance.pitch = 1.0;
-        window.speechSynthesis.speak(utterance);
+        synth.cancel(); // キューをクリアしてから開始
+        currentUtterance = new SpeechSynthesisUtterance(text.trim());
+        currentUtterance.lang = 'ja-JP';
+        currentUtterance.rate = 1.0;
+        currentUtterance.pitch = 1.0;
+        currentUtterance.onend = () => { currentUtterance = null; };
+        currentUtterance.onerror = () => { currentUtterance = null; };
+        synth.speak(currentUtterance);
     } catch (error) {
         console.error("speechSynthesis error:", error);
         alert("読み上げに失敗しました。");
